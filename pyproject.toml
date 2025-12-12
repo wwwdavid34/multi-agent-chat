@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-agent-panel"
+version = "0.1.0"
+description = "LangGraph-based AI multi-agent discussion panel"
+authors = [{name = "Codex"}]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "langchain-openai>=0.1.7",
+    "langgraph>=0.2.39",
+    "langgraph-checkpoint-postgres>=0.1.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools]
+py-modules = ["config", "panel_graph", "main"]
