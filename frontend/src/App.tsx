@@ -1,10 +1,19 @@
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
 import { askPanel } from "./api";
 import { Markdown } from "./components/Markdown";
+import { PanelConfigurator } from "./components/PanelConfigurator";
 import { ThemeToggle } from "./components/theme-toggle";
-import type { AskResponse } from "./types";
+import { fetchModelsForProvider, PROVIDER_LABELS } from "./lib/modelProviders";
+import type {
+  AskResponse,
+  LLMProvider,
+  PanelistConfigPayload,
+  ProviderKeyMap,
+  ProviderModelsMap,
+  ProviderModelStatusMap,
+} from "./types";
 
 const DEFAULT_THREAD_ID = "demo-thread";
 
@@ -29,7 +38,20 @@ const parseJSON = <T,>(value: string | null, fallback: T): T => {
   }
 };
 
-function MessageBubble({ entry, onToggle }: { entry: MessageEntry; onToggle: () => void }) {
+const MAX_PANELISTS = 6;
+const DEFAULT_PANELISTS: PanelistConfigPayload[] = [
+  { id: "panelist-1", name: "Panelist 1", provider: "openai", model: "" },
+  { id: "panelist-2", name: "Panelist 2", provider: "openai", model: "" },
+];
+
+const createPanelist = (index: number): PanelistConfigPayload => ({
+  id: `panelist-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+  name: `Panelist ${index}`,
+  provider: "openai",
+  model: "",
+});
+
+const MessageBubble = memo(function MessageBubble({ entry, onToggle }: { entry: MessageEntry; onToggle: () => void }) {
   return (
     <motion.article
       className="flex flex-col gap-4 min-w-0"
@@ -100,7 +122,8 @@ function MessageBubble({ entry, onToggle }: { entry: MessageEntry; onToggle: () 
       </div>
     </motion.article>
   );
-}
+});
+MessageBubble.displayName = "MessageBubble";
 
 export default function App() {
   const [threadId, setThreadId] = useState(() => localStorage.getItem("threadId") ?? DEFAULT_THREAD_ID);
@@ -127,14 +150,25 @@ export default function App() {
     }
     return normalized;
   });
-  const [question, setQuestion] = useState("");
   const [newThreadName, setNewThreadName] = useState("");
   const [isCreatingThread, setIsCreatingThread] = useState(false);
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [panelists, setPanelists] = useState<PanelistConfigPayload[]>(() => {
+    const stored = parseJSON<PanelistConfigPayload[]>(localStorage.getItem("panelists"), DEFAULT_PANELISTS);
+    return stored.length > 0 ? stored : DEFAULT_PANELISTS;
+  });
+  const [providerKeys, setProviderKeys] = useState<ProviderKeyMap>(() =>
+    parseJSON<ProviderKeyMap>(localStorage.getItem("providerKeys"), {})
+  );
+  const [providerModels, setProviderModels] = useState<ProviderModelsMap>(() =>
+    parseJSON<ProviderModelsMap>(localStorage.getItem("providerModels"), {})
+  );
+  const [modelStatus, setModelStatus] = useState<ProviderModelStatusMap>({});
+  const [configOpen, setConfigOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const newThreadInputRef = useRef<HTMLInputElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
 
   const messages = conversations[threadId] ?? [];
 
@@ -149,6 +183,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("conversations", JSON.stringify(conversations));
   }, [conversations]);
+
+  useEffect(() => {
+    localStorage.setItem("panelists", JSON.stringify(panelists));
+  }, [panelists]);
+
+  useEffect(() => {
+    localStorage.setItem("providerKeys", JSON.stringify(providerKeys));
+  }, [providerKeys]);
+
+  useEffect(() => {
+    localStorage.setItem("providerModels", JSON.stringify(providerModels));
+  }, [providerModels]);
 
   useEffect(() => {
     if (!threads.includes(threadId)) {
@@ -166,44 +212,104 @@ export default function App() {
     }
   }, [isCreatingThread]);
 
-  const hasContent = Boolean(question.trim()) || attachments.length > 0;
-  const canSubmit = hasContent && !loading;
+  const preparedPanelists = useMemo(
+    () =>
+      panelists.map((panelist, index) => ({
+        ...panelist,
+        name: panelist.name.trim() || `Panelist ${index + 1}`,
+      })),
+    [panelists]
+  );
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!hasContent) return;
+  const panelistSummaries = useMemo(
+    () =>
+      preparedPanelists.map((panelist) => ({
+        id: panelist.id,
+        name: panelist.name,
+        provider: PROVIDER_LABELS[panelist.provider],
+        model: panelist.model,
+      })),
+    [preparedPanelists]
+  );
 
-    setLoading(true);
-    setError(null);
+  const sanitizedProviderKeys = useMemo(() => {
+    const entries = Object.entries(providerKeys).filter(([, value]) => Boolean(value?.trim()));
+    return Object.fromEntries(entries.map(([key, value]) => [key, value.trim()])) as ProviderKeyMap;
+  }, [providerKeys]);
 
-    try {
-      const sanitizedQuestion = question.trim() || "See attached images.";
-      const result = await askPanel({
-        thread_id: threadId.trim(),
-        question: sanitizedQuestion,
-        attachments,
-      });
-      const newEntry: MessageEntry = {
-        id: `${threadId}-${Date.now()}`,
-        question: sanitizedQuestion,
-        attachments,
-        summary: result.summary,
-        panel_responses: result.panel_responses,
-        expanded: false,
-      };
+  const handleSend = useCallback(
+    async ({ question, attachments }: { question: string; attachments: string[] }) => {
+      const hasContent = Boolean(question.trim()) || attachments.length > 0;
+      if (!hasContent || loading) {
+        return;
+      }
 
-      setConversations((prev) => ({
-        ...prev,
-        [threadId]: [...(prev[threadId] ?? []), newEntry],
-      }));
-      setQuestion("");
-      setAttachments([]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setLoading(false);
+      setLoading(true);
+      setError(null);
+
+      try {
+        const sanitizedQuestion = question.trim() || "See attached images.";
+        const result = await askPanel({
+          thread_id: threadId.trim(),
+          question: sanitizedQuestion,
+          attachments,
+          panelists: preparedPanelists,
+          provider_keys: sanitizedProviderKeys,
+        });
+        const newEntry: MessageEntry = {
+          id: `${threadId}-${Date.now()}`,
+          question: sanitizedQuestion,
+          attachments,
+          summary: result.summary,
+          panel_responses: result.panel_responses,
+          expanded: false,
+        };
+
+        setConversations((prev) => ({
+          ...prev,
+          [threadId]: [...(prev[threadId] ?? []), newEntry],
+        }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loading, preparedPanelists, sanitizedProviderKeys, threadId]
+  );
+
+  const handleScrollToBottom = useCallback(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setShowScrollToBottom(false);
+  }, []);
+
+  useEffect(() => {
+    function handleScroll() {
+      const el = messageListRef.current;
+      if (!el) return;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowScrollToBottom(distanceFromBottom > 180);
     }
-  }
+
+    handleScroll();
+    const el = messageListRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", handleScroll);
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom <= 200) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      setShowScrollToBottom(false);
+    }
+  }, [messages.length]);
 
   function toggleEntry(index: number) {
     setConversations((prev) => ({
@@ -212,30 +318,6 @@ export default function App() {
         i === index ? { ...item, expanded: !item.expanded } : item
       ) ?? [],
     }));
-  }
-
-  function handleFilesSelected(files: FileList | null) {
-    if (!files) return;
-    const toRead = Array.from(files).slice(0, 4);
-    Promise.all(
-      toRead.map(
-        (file) =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          })
-      )
-    )
-      .then((data) => {
-        setAttachments((prev) => [...prev, ...data]);
-      })
-      .catch(() => setError("Failed to load image"));
-  }
-
-  function removeAttachment(index: number) {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
   }
 
   function handleThreadSelect(id: string) {
@@ -297,6 +379,101 @@ export default function App() {
       cancelThreadCreation();
     }
   }
+
+  const handlePanelistChange = useCallback(
+    (id: string, updates: Partial<PanelistConfigPayload>) => {
+      setPanelists((prev) =>
+        prev.map((panelist) => {
+          if (panelist.id !== id) return panelist;
+          const nextProvider = updates.provider ?? panelist.provider;
+          const providerModelsList = providerModels[nextProvider] ?? [];
+          let nextModel = updates.model ?? panelist.model;
+          if (updates.provider && updates.provider !== panelist.provider) {
+            nextModel = providerModelsList[0]?.id ?? "";
+          }
+
+          return {
+            ...panelist,
+            ...updates,
+            provider: nextProvider,
+            model: nextModel,
+            name: updates.name ?? panelist.name,
+          };
+        })
+      );
+    },
+    [providerModels]
+  );
+
+  const handleAddPanelist = useCallback(() => {
+    setPanelists((prev) => {
+      if (prev.length >= MAX_PANELISTS) return prev;
+      const index = prev.length + 1;
+      const base = createPanelist(index);
+      const defaultModel = providerModels[base.provider]?.[0]?.id ?? "";
+      return [...prev, { ...base, model: defaultModel }];
+    });
+  }, [providerModels]);
+
+  const handleRemovePanelist = useCallback((id: string) => {
+    setPanelists((prev) => {
+      if (prev.length <= 1) {
+        return prev;
+      }
+      const filtered = prev.filter((panelist) => panelist.id !== id);
+      return filtered.length > 0 ? filtered : prev;
+    });
+  }, []);
+
+  const handleProviderKeyChange = useCallback((provider: LLMProvider, key: string) => {
+    setProviderKeys((prev) => ({ ...prev, [provider]: key }));
+  }, []);
+
+  const handleFetchProviderModels = useCallback(
+    async (provider: LLMProvider) => {
+      const apiKey = providerKeys[provider]?.trim();
+      if (!apiKey) {
+        setModelStatus((prev) => ({
+          ...prev,
+          [provider]: { loading: false, error: "API key required" },
+        }));
+        return;
+      }
+
+      setModelStatus((prev) => ({
+        ...prev,
+        [provider]: { loading: true, error: null },
+      }));
+
+      try {
+        const models = await fetchModelsForProvider(provider, apiKey);
+        setProviderModels((prev) => ({ ...prev, [provider]: models }));
+        setModelStatus((prev) => ({
+          ...prev,
+          [provider]: { loading: false, error: null },
+        }));
+        setPanelists((prev) =>
+          prev.map((panelist) => {
+            if (panelist.provider !== provider) return panelist;
+            if (!models.length) {
+              return { ...panelist, model: "" };
+            }
+            const hasModel = models.some((model) => model.id === panelist.model);
+            return hasModel ? panelist : { ...panelist, model: models[0].id };
+          })
+        );
+      } catch (err) {
+        setModelStatus((prev) => ({
+          ...prev,
+          [provider]: {
+            loading: false,
+            error: err instanceof Error ? err.message : "Failed to fetch models",
+          },
+        }));
+      }
+    },
+    [providerKeys]
+  );
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-gradient-to-br from-slate-100 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
@@ -372,92 +549,218 @@ export default function App() {
               <p className="m-0 uppercase text-xs text-slate-500 dark:text-slate-400 tracking-widest">Thread</p>
               <h1 className="mt-1 mb-0 text-2xl font-semibold text-slate-900 dark:text-slate-100 truncate">{threadId}</h1>
             </div>
-            <div className="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-400">
-              <p className="hidden md:block">Keep chatting to build on the multi-agent discussion.</p>
+            <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-400">
+              <button
+                type="button"
+                onClick={() => setConfigOpen(true)}
+                className="rounded-full border border-slate-300 dark:border-slate-700 px-4 py-2 font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500"
+              >
+                Panel settings
+              </button>
               <ThemeToggle />
             </div>
           </header>
 
-          <section className="flex flex-1 min-h-0 flex-col rounded-[28px] bg-white/80 dark:bg-slate-950/40 border border-white/40 dark:border-slate-800/60 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.6)] backdrop-blur">
-            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 px-3 sm:px-8 lg:px-12 py-8">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+            {panelistSummaries.map((summary) => (
+              <span
+                key={summary.id}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/60 px-3 py-1"
+              >
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{summary.name}</span>
+                <span>
+                  · {summary.provider}
+                  {summary.model ? ` · ${summary.model}` : ""}
+                </span>
+              </span>
+            ))}
+          </div>
+
+          <section className="flex flex-1 min-h-0 flex-col rounded-[28px] bg-white/80 dark:bg-slate-950/40 border border-white/40 dark:border-slate-800/60 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.6)] backdrop-blur relative">
+            <div
+              className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 px-3 sm:px-8 lg:px-12 py-8"
+              ref={messageListRef}
+            >
               {messages.length === 0 && <p className="text-slate-500 dark:text-slate-400 text-center">Ask a question to start the discussion.</p>}
               {messages.map((entry, index) => (
                 <MessageBubble key={entry.id} entry={entry} onToggle={() => toggleEntry(index)} />
               ))}
             </div>
+            {showScrollToBottom && (
+              <motion.button
+                type="button"
+                className="absolute right-6 bottom-36 md:bottom-40 rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 px-4 py-2 shadow-lg text-sm font-semibold"
+                onClick={handleScrollToBottom}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+              >
+                Go to latest
+              </motion.button>
+            )}
             <div className="border-t border-slate-200/60 dark:border-slate-800/70 bg-gradient-to-t from-slate-50/80 via-white/60 to-transparent dark:from-slate-900/70 dark:via-slate-950/50 px-3 sm:px-8 lg:px-12 py-6">
-              <form className="min-w-0" onSubmit={handleSubmit}>
-                <div className="flex flex-col gap-4 min-w-0">
-                  <div className="relative rounded-2xl border border-slate-300/45 dark:border-slate-700/45 bg-white/95 dark:bg-slate-900/90 shadow-xl max-w-full">
-                    <textarea
-                      value={question}
-                      onChange={(e) => setQuestion(e.target.value)}
-                      placeholder="Send a message..."
-                      rows={3}
-                      className="w-full border-none rounded-2xl p-4 md:p-5 pr-16 md:pr-20 pb-14 md:pb-16 text-sm md:text-base font-inherit resize-vertical min-h-[120px] md:min-h-[140px] bg-transparent text-slate-900 dark:text-slate-100 focus:outline-none"
-                    />
-                    <div className="absolute left-4 md:left-5 right-4 md:right-5 bottom-3 md:bottom-4 flex items-center gap-2 md:gap-3">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3.5 py-1.5 md:py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 text-xs md:text-sm font-semibold cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true" className="w-3 h-3 md:w-4 md:h-4">
-                          <path
-                            fill="currentColor"
-                            d="M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z"
-                          />
-                        </svg>
-                        <span className="hidden sm:inline">Add image</span>
-                        <span className="sm:hidden">Image</span>
-                      </button>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        hidden
-                        onChange={(e) => {
-                          handleFilesSelected(e.target.files);
-                          e.target.value = "";
-                        }}
-                      />
-                      <button
-                        type="submit"
-                        className={`ml-auto w-9 h-9 md:w-11 md:h-11 rounded-full inline-flex items-center justify-center bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-600 dark:to-purple-600 text-white border-none cursor-pointer transition-all ${
-                          hasContent ? "opacity-100 scale-100" : "opacity-0 scale-80 translate-y-2"
-                        }`}
-                        disabled={!canSubmit}
-                        aria-label="Send message"
-                      >
-                        {loading ? "..." : (
-                          <svg viewBox="0 0 24 24" aria-hidden="true" className="w-4 h-4 md:w-5 md:h-5">
-                            <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
-                          </svg>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {attachments.length > 0 && (
-                    <div className="flex flex-wrap gap-3">
-                      {attachments.map((src, index) => (
-                        <div className="relative w-20 h-20 rounded-xl overflow-hidden border border-sky-200 dark:border-sky-900" key={index}>
-                          <img src={src} alt={`preview-${index + 1}`} className="w-full h-full object-cover" />
-                          <button type="button" onClick={() => removeAttachment(index)} className="absolute top-1 right-1 border-none rounded-full w-5 h-5 text-xs bg-slate-900/75 text-white cursor-pointer hover:bg-slate-900 transition-colors">
-                            &times;
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </form>
-              {error && <p className="text-red-700 dark:text-red-400">{error}</p>}
+              <ChatComposer
+                loading={loading}
+                error={error}
+                onSend={handleSend}
+                onClearError={() => setError(null)}
+                onError={(message) => setError(message)}
+              />
             </div>
           </section>
         </div>
       </main>
+      <PanelConfigurator
+        open={configOpen}
+        onClose={() => setConfigOpen(false)}
+        panelists={panelists}
+        onPanelistChange={handlePanelistChange}
+        onAddPanelist={handleAddPanelist}
+        onRemovePanelist={handleRemovePanelist}
+        providerKeys={providerKeys}
+        onProviderKeyChange={handleProviderKeyChange}
+        providerModels={providerModels}
+        modelStatus={modelStatus}
+        onFetchModels={handleFetchProviderModels}
+        maxPanelists={MAX_PANELISTS}
+      />
     </div>
+  );
+}
+
+interface ChatComposerProps {
+  loading: boolean;
+  error: string | null;
+  onSend: (payload: { question: string; attachments: string[] }) => Promise<void>;
+  onClearError: () => void;
+  onError: (message: string) => void;
+}
+
+function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatComposerProps) {
+  const [question, setQuestion] = useState("");
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const hasContent = Boolean(question.trim()) || attachments.length > 0;
+  const canSubmit = hasContent && !loading;
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSubmit) return;
+
+    try {
+      await onSend({ question, attachments });
+      setQuestion("");
+      setAttachments([]);
+    } catch {
+      // Parent handles error state
+    }
+  }
+
+  function handleFilesSelected(files: FileList | null) {
+    if (!files) return;
+    const toRead = Array.from(files).slice(0, 4);
+    Promise.all(
+      toRead.map(
+        (file) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          })
+      )
+    )
+      .then((data) => {
+        setAttachments((prev) => [...prev, ...data]);
+        if (error) onClearError();
+      })
+      .catch(() => onError("Failed to load image"));
+  }
+
+  function removeAttachment(index: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  return (
+    <form className="min-w-0" onSubmit={handleSubmit}>
+      <div className="flex flex-col gap-4 min-w-0">
+        <div className="relative rounded-2xl border border-slate-300/45 dark:border-slate-700/45 bg-white/95 dark:bg-slate-900/90 shadow-xl max-w-full">
+          <textarea
+            value={question}
+            onChange={(event) => {
+              setQuestion(event.target.value);
+              if (error) onClearError();
+            }}
+            placeholder="Send a message..."
+            rows={3}
+            className="w-full border-none rounded-2xl p-4 md:p-5 pr-16 md:pr-20 pb-14 md:pb-16 text-sm md:text-base font-inherit resize-vertical min-h-[120px] md:min-h-[140px] bg-transparent text-slate-900 dark:text-slate-100 focus:outline-none"
+          />
+          <div className="absolute left-4 md:left-5 right-4 md:right-5 bottom-3 md:bottom-4 flex items-center gap-2 md:gap-3">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3.5 py-1.5 md:py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 text-xs md:text-sm font-semibold cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="w-3 h-3 md:w-4 md:h-4">
+                <path
+                  fill="currentColor"
+                  d="M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z"
+                />
+              </svg>
+              <span className="hidden sm:inline">Add image</span>
+              <span className="sm:hidden">Image</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(event) => {
+                handleFilesSelected(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <button
+              type="submit"
+              className={`ml-auto w-9 h-9 md:w-11 md:h-11 rounded-full inline-flex items-center justify-center bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-600 dark:to-purple-600 text-white border-none cursor-pointer transition-all ${
+                hasContent ? "opacity-100 scale-100" : "opacity-0 scale-80 translate-y-2"
+              }`}
+              disabled={!canSubmit}
+              aria-label="Send message"
+            >
+              {loading ? "..." : (
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="w-4 h-4 md:w-5 md:h-5">
+                  <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-3">
+            {attachments.map((src, index) => (
+              <div className="relative w-20 h-20 rounded-xl overflow-hidden border border-sky-200 dark:border-sky-900" key={index}>
+                <img src={src} alt={`preview-${index + 1}`} className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    removeAttachment(index);
+                    if (error) onClearError();
+                  }}
+                  className="absolute top-1 right-1 border-none rounded-full w-5 h-5 text-xs bg-slate-900/75 text-white cursor-pointer hover:bg-slate-900 transition-colors"
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {error && <p className="text-red-700 dark:text-red-400">{error}</p>}
+      </div>
+    </form>
   );
 }
