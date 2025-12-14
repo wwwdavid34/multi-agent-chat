@@ -7,7 +7,7 @@ from typing import Annotated, Any, Callable, Dict, Iterable, List, Optional
 
 import httpx
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, SystemMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
@@ -34,6 +34,7 @@ class PanelState(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     panel_responses: Dict[str, str]
     summary: Optional[str]
+    conversation_summary: str
 
 
 class PanelistConfig(TypedDict):
@@ -211,7 +212,7 @@ PROVIDER_FACTORIES: Dict[str, ProviderFactory] = {
 
 
 get_openai_api_key()
-
+summarizer_model = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, api_key=get_openai_api_key())
 moderator_model = ChatOpenAI(model="gpt-4o", temperature=0.1, api_key=get_openai_api_key())
 
 
@@ -222,6 +223,9 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
     provider_keys = _resolve_provider_keys(config)
     panel_responses = dict(state.get("panel_responses", {}))
     history: List[AnyMessage] = list(state.get("messages", []))
+    summary = state.get("conversation_summary", "")
+    if summary:
+        history = [SystemMessage(content=f"Previous conversation summary: {summary}")] + history
     new_messages: List[AnyMessage] = []
 
     runners = [_build_runner(p, provider_keys) for p in panel_configs]
@@ -262,6 +266,43 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
         "messages": [response],
         "summary": response.content,
     }
+
+
+def summarize_conversation(state: PanelState) -> Dict[str, Any]:
+    summary = state.get("conversation_summary", "")
+    messages = state.get("messages", [])
+    
+    # Keep last 4 messages
+    if len(messages) <= 4:
+        return {}
+        
+    to_summarize = messages[:-4]
+    
+    # Generate summary
+    prompt = (
+        f"Current summary: {summary}\n\n"
+        "New lines of conversation:\n" +
+        "\n".join(f"{m.type}: {m.content}" for m in to_summarize) +
+        "\n\nSummarize the new lines into the existing summary."
+    )
+    
+    response = summarizer_model.invoke([HumanMessage(content=prompt)])
+    new_summary = response.content
+    
+    # Delete summarized messages
+    delete_messages = [RemoveMessage(id=m.id) for m in to_summarize]
+    
+    return {
+        "conversation_summary": new_summary,
+        "messages": delete_messages
+    }
+
+
+def should_summarize(state: PanelState) -> str:
+    messages = state.get("messages", [])
+    if len(messages) > 6:
+        return "summarize_conversation"
+    return "panelists"
 
 
 def _resolve_panelists(config: Optional[RunnableConfig]) -> List[PanelistConfig]:
@@ -335,7 +376,11 @@ def build_panel_graph():
     builder = StateGraph(PanelState)
 
     builder.add_node("panelists", panelist_sequence_node)
-    builder.add_edge(START, "panelists")
+    builder.add_node("summarize_conversation", summarize_conversation)
+    
+    builder.add_conditional_edges(START, should_summarize)
+    builder.add_edge("summarize_conversation", "panelists")
+    
     builder.add_node("moderator", moderator_node)
     builder.add_edge("panelists", "moderator")
     builder.add_edge("moderator", END)
