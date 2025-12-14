@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Annotated, Any, Callable, Dict, Iterable, List, Optional
 
 import httpx
@@ -70,6 +71,9 @@ class PanelistRunner(Protocol):
     def invoke(self, messages: List[AnyMessage]) -> AIMessage:  # pragma: no cover - protocol
         ...
 
+    async def ainvoke(self, messages: List[AnyMessage]) -> AIMessage:  # pragma: no cover - protocol
+        ...
+
 
 class GrokChatRunner:
     """Minimal runner for xAI's Grok chat completion API."""
@@ -90,6 +94,26 @@ class GrokChatRunner:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         with httpx.Client(timeout=30.0) as client:
             response = client.post(self.api_url, json=payload, headers=headers)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:  # pragma: no cover - network failures
+                raise RuntimeError(f"Grok request failed: {response.text}") from exc
+
+        data = response.json()
+        content = _extract_grok_content(data)
+        if not content:
+            raise RuntimeError("Grok returned an empty response")
+        return AIMessage(content=content)
+
+    async def ainvoke(self, messages: List[AnyMessage]) -> AIMessage:
+        payload = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "messages": _to_openai_messages(messages),
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(self.api_url, json=payload, headers=headers)
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:  # pragma: no cover - network failures
@@ -191,8 +215,8 @@ get_openai_api_key()
 moderator_model = ChatOpenAI(model="gpt-4o", temperature=0.1, api_key=get_openai_api_key())
 
 
-def panelist_sequence_node(state: PanelState, config: Optional[RunnableConfig] = None) -> Dict[str, object]:
-    """Run each configured panelist sequentially and collect responses."""
+async def panelist_sequence_node(state: PanelState, config: Optional[RunnableConfig] = None) -> Dict[str, object]:
+    """Run each configured panelist in parallel and collect responses."""
 
     panel_configs = _resolve_panelists(config)
     provider_keys = _resolve_provider_keys(config)
@@ -200,10 +224,12 @@ def panelist_sequence_node(state: PanelState, config: Optional[RunnableConfig] =
     history: List[AnyMessage] = list(state.get("messages", []))
     new_messages: List[AnyMessage] = []
 
-    for panelist in panel_configs:
-        runner = _build_runner(panelist, provider_keys)
-        response = runner.invoke(history)
-        history.append(response)
+    runners = [_build_runner(p, provider_keys) for p in panel_configs]
+    
+    # Run all panelists in parallel
+    results = await asyncio.gather(*(runner.ainvoke(history) for runner in runners))
+
+    for panelist, response in zip(panel_configs, results):
         new_messages.append(response)
         panel_responses[panelist["name"]] = response.content
 

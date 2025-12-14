@@ -57,7 +57,7 @@ class ProviderModelsResponse(BaseModel):
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest) -> AskResponse:
+async def ask(req: AskRequest) -> AskResponse:
     attachments = req.attachments or []
     attachment_md = "\n".join(
         f"![user attachment {idx + 1}]({url})" for idx, url in enumerate(attachments)
@@ -81,7 +81,7 @@ def ask(req: AskRequest) -> AskResponse:
             "provider_keys": {k: v for k, v in (req.provider_keys or {}).items() if v},
         }
     }
-    result = panel_graph.invoke(state, config=config)
+    result = await panel_graph.ainvoke(state, config=config)
 
     return AskResponse(
         thread_id=req.thread_id,
