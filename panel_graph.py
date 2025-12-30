@@ -35,6 +35,8 @@ class PanelState(TypedDict):
     panel_responses: Dict[str, str]
     summary: Optional[str]
     conversation_summary: str
+    search_results: Optional[str]  # Web search results shared among panelists
+    needs_search: bool  # Whether moderator determined search is needed
 
 
 class PanelistConfig(TypedDict):
@@ -216,6 +218,107 @@ summarizer_model = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, api_key=get_
 moderator_model = ChatOpenAI(model="gpt-4o", temperature=0.1, api_key=get_openai_api_key())
 
 
+def _truncate_messages(messages: List[AnyMessage], max_recent: int = 10) -> List[AnyMessage]:
+    """
+    Intelligently truncate message history to fit within context limits.
+
+    Strategy:
+    1. Keep system messages (summaries, search results)
+    2. Keep the most recent user-assistant exchanges
+    3. Drop older conversation history
+    """
+    if len(messages) <= max_recent:
+        return messages
+
+    # Separate system messages from conversation messages
+    system_messages = [msg for msg in messages if isinstance(msg, SystemMessage)]
+    conversation_messages = [msg for msg in messages if not isinstance(msg, SystemMessage)]
+
+    # Keep only the most recent conversation messages
+    recent_conversation = conversation_messages[-max_recent:]
+
+    # Combine: system messages + recent conversation
+    truncated = system_messages + recent_conversation
+
+    logger.warning(
+        f"Context truncated: {len(messages)} → {len(truncated)} messages "
+        f"(kept {len(system_messages)} system + {len(recent_conversation)} recent)"
+    )
+
+    return truncated
+
+
+async def _invoke_with_retry(
+    runner,
+    history: List[AnyMessage],
+    panelist_name: str,
+    max_retries: int = 3
+) -> AnyMessage:
+    """
+    Invoke a panelist with automatic retry on context length errors.
+
+    Progressively reduces context window on each retry:
+    - Retry 1: Keep last 10 messages
+    - Retry 2: Keep last 6 messages
+    - Retry 3: Keep last 3 messages
+    """
+    truncation_levels = [10, 6, 3]
+
+    for attempt in range(max_retries):
+        try:
+            current_history = history if attempt == 0 else _truncate_messages(history, truncation_levels[attempt - 1])
+            return await runner.ainvoke(current_history)
+
+        except Exception as e:
+            error_str = str(e)
+
+            # Check if it's a rate limit error (fail fast, don't retry)
+            is_rate_limit_error = (
+                "rate_limit_exceeded" in error_str or
+                "rate limit" in error_str.lower() or
+                "too many requests" in error_str.lower() or
+                "quota exceeded" in error_str.lower()
+            )
+
+            if is_rate_limit_error:
+                logger.error(f"{panelist_name}: Rate limit exceeded. Not retrying.")
+                return AIMessage(
+                    content=f"I apologize, but I cannot respond right now due to rate limiting. "
+                           f"The API has reached its request limit. Please try again in a moment."
+                )
+
+            # Check if it's a context length error (retry with truncation)
+            is_context_error = (
+                "context_length_exceeded" in error_str or
+                "maximum context length" in error_str.lower() or
+                "too many tokens" in error_str.lower()
+            )
+
+            if not is_context_error:
+                # Not a context error, don't retry
+                raise
+
+            if attempt < max_retries - 1:
+                logger.warning(
+                    f"{panelist_name}: Context length exceeded (attempt {attempt + 1}/{max_retries}). "
+                    f"Retrying with truncated context (max {truncation_levels[attempt]} messages)..."
+                )
+            else:
+                # Final retry failed
+                logger.error(
+                    f"{panelist_name}: All retries exhausted. Returning error response."
+                )
+                # Return a fallback response
+                return AIMessage(
+                    content=f"I apologize, but I cannot process this request due to context length limitations. "
+                           f"The conversation history is too long. Please start a new conversation or "
+                           f"reduce the amount of context."
+                )
+
+    # Should never reach here, but just in case
+    raise RuntimeError("Unexpected retry logic error")
+
+
 async def panelist_sequence_node(state: PanelState, config: Optional[RunnableConfig] = None) -> Dict[str, object]:
     """Run each configured panelist in parallel and collect responses."""
 
@@ -226,12 +329,26 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
     summary = state.get("conversation_summary", "")
     if summary:
         history = [SystemMessage(content=f"Previous conversation summary: {summary}")] + history
+
+    # Inject search results if available
+    search_results = state.get("search_results")
+    if search_results:
+        search_context = SystemMessage(
+            content=f"IMPORTANT: Web search results for the current question:\n\n{search_results}\n\n"
+                   f"Please use this information in your response when relevant."
+        )
+        history = [search_context] + history
+        logger.info("Injected search results into panelist context")
+
     new_messages: List[AnyMessage] = []
 
     runners = [_build_runner(p, provider_keys) for p in panel_configs]
-    
-    # Run all panelists in parallel
-    results = await asyncio.gather(*(runner.ainvoke(history) for runner in runners))
+
+    # Run all panelists in parallel with retry logic for context errors
+    results = await asyncio.gather(
+        *(_invoke_with_retry(runner, history, panelist["name"])
+          for runner, panelist in zip(runners, panel_configs))
+    )
 
     for panelist, response in zip(panel_configs, results):
         new_messages.append(response)
@@ -241,6 +358,122 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
         "messages": new_messages,
         "panel_responses": panel_responses,
     }
+
+
+async def moderator_search_decision(state: PanelState) -> Dict[str, Any]:
+    """Moderator evaluates if web search is needed to answer the question."""
+
+    messages = state.get("messages", [])
+    if not messages:
+        return {"search_results": None, "needs_search": False}
+
+    # Get the latest user question
+    user_messages = [m for m in messages if isinstance(m, HumanMessage)]
+    if not user_messages:
+        return {"search_results": None, "needs_search": False}
+
+    latest_question = user_messages[-1].content
+
+    # Moderator analyzes the question
+    decision_prompt = f"""You are a moderator analyzing whether a question requires current web information.
+
+Question: {latest_question}
+
+Analyze if this question can be answered with general knowledge and reasoning, or if it requires:
+- Current events or recent developments
+- Real-time data (weather, stock prices, sports scores, etc.)
+- Information about events that happened recently
+- Latest research, news, or announcements
+- Time-sensitive information
+- Facts that change frequently
+
+Respond in this exact format:
+DECISION: [SEARCH or NO_SEARCH]
+REASONING: [Brief explanation of why search is or isn't needed]
+
+Examples:
+- "Explain how neural networks work" → NO_SEARCH (general knowledge)
+- "What are the latest breakthroughs in AI?" → SEARCH (needs current info)
+- "Who won the 2024 election?" → SEARCH (recent event)
+- "What is quantum computing?" → NO_SEARCH (established concept)
+- "Current weather in Tokyo" → SEARCH (real-time data)
+"""
+
+    response = await moderator_model.ainvoke([HumanMessage(content=decision_prompt)])
+    decision_text = response.content
+
+    # Parse decision
+    needs_search = "DECISION: SEARCH" in decision_text.upper()
+
+    # Extract reasoning for logging
+    reasoning = "No reasoning provided"
+    if "REASONING:" in decision_text:
+        reasoning = decision_text.split("REASONING:", 1)[1].strip()
+
+    logger.info(f"Moderator decision: {'SEARCH' if needs_search else 'NO_SEARCH'}")
+    logger.info(f"Reasoning: {reasoning}")
+
+    return {
+        "search_results": None,  # Will be filled by search node if needed
+        "needs_search": needs_search,
+    }
+
+
+async def search_node(state: PanelState) -> Dict[str, Any]:
+    """Perform web search - only called when moderator decides it's needed."""
+
+    messages = state.get("messages", [])
+    user_messages = [m for m in messages if isinstance(m, HumanMessage)]
+    if not user_messages:
+        return {"search_results": None}
+
+    latest_question = user_messages[-1].content
+
+    logger.info(f"Performing web search for: {latest_question}")
+
+    try:
+        # Initialize Tavily search
+        from langchain_tavily import TavilySearch
+
+        search_tool = TavilySearch(
+            max_results=5,
+            include_answer=True,
+            include_raw_content=True,
+            search_depth="advanced",
+        )
+
+        results = await search_tool.ainvoke(latest_question)
+
+        # TavilySearch returns a formatted string directly
+        if isinstance(results, str):
+            formatted_results = f"=== WEB SEARCH RESULTS ===\n\n"
+            formatted_results += f"Query: {latest_question}\n\n"
+            formatted_results += results
+        else:
+            # Handle list/dict format (fallback)
+            formatted_results = "=== WEB SEARCH RESULTS ===\n\n"
+            formatted_results += f"Query: {latest_question}\n"
+
+            if isinstance(results, list):
+                formatted_results += f"Found {len(results)} sources\n\n"
+                for i, result in enumerate(results, 1):
+                    if isinstance(result, dict):
+                        formatted_results += f"## Source {i}: {result.get('title', 'Untitled')}\n"
+                        formatted_results += f"URL: {result.get('url', 'N/A')}\n"
+                        formatted_results += f"\nContent:\n{result.get('content', '')}\n"
+                        formatted_results += "\n" + "="*50 + "\n\n"
+                    else:
+                        formatted_results += f"{result}\n\n"
+            else:
+                formatted_results += f"{results}\n"
+
+        logger.info("Search completed successfully")
+        return {"search_results": formatted_results}
+
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        error_msg = f"Search attempted but failed: {str(e)}\nPlease answer based on your general knowledge."
+        return {"search_results": error_msg}
 
 
 def moderator_node(state: PanelState) -> Dict[str, object]:
@@ -258,14 +491,63 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
         f"Panel responses:\n{panel_text}"
     )
 
-    response = moderator_model.invoke(
-        messages + [HumanMessage(content=moderator_prompt)]
-    )
+    # Try with full context first, then progressively truncate on context errors
+    truncation_levels = [None, 10, 6, 3]  # None means no truncation
 
-    return {
-        "messages": [response],
-        "summary": response.content,
-    }
+    for attempt, max_messages in enumerate(truncation_levels):
+        try:
+            current_messages = messages if max_messages is None else _truncate_messages(messages, max_messages)
+
+            response = moderator_model.invoke(
+                current_messages + [HumanMessage(content=moderator_prompt)]
+            )
+
+            return {
+                "messages": [response],
+                "summary": response.content,
+            }
+
+        except Exception as e:
+            error_str = str(e)
+
+            # Check if it's a rate limit error (fail fast, don't retry)
+            is_rate_limit_error = (
+                "rate_limit_exceeded" in error_str or
+                "rate limit" in error_str.lower() or
+                "too many requests" in error_str.lower() or
+                "quota exceeded" in error_str.lower()
+            )
+
+            if is_rate_limit_error:
+                logger.error("Moderator: Rate limit exceeded. Not retrying.")
+                return {
+                    "messages": [],
+                    "summary": "Unable to generate summary due to rate limiting. The API has reached its request limit. Please try again in a moment.",
+                }
+
+            # Check if it's a context length error (retry with truncation)
+            is_context_error = (
+                "context_length_exceeded" in error_str or
+                "maximum context length" in error_str.lower() or
+                "too many tokens" in error_str.lower()
+            )
+
+            if not is_context_error or attempt == len(truncation_levels) - 1:
+                # Not a context error, or final attempt failed
+                if is_context_error:
+                    logger.error("Moderator: All retries exhausted due to context length")
+                    # Return error summary
+                    return {
+                        "messages": [],
+                        "summary": "Unable to generate summary due to context length limitations. Please start a new conversation.",
+                    }
+                else:
+                    raise
+
+            logger.warning(
+                f"Moderator: Context length exceeded (attempt {attempt + 1}). "
+                f"Retrying with truncated context (max {truncation_levels[attempt + 1]} messages)..."
+            )
 
 
 def summarize_conversation(state: PanelState) -> Dict[str, Any]:
@@ -302,6 +584,13 @@ def should_summarize(state: PanelState) -> str:
     messages = state.get("messages", [])
     if len(messages) > 6:
         return "summarize_conversation"
+    return "moderator_search_decision"
+
+
+def should_search(state: PanelState) -> str:
+    """Route to search node if moderator determined search is needed."""
+    if state.get("needs_search", False):
+        return "search"
     return "panelists"
 
 
@@ -375,14 +664,29 @@ def _provider_key(provider: str, provider_keys: Dict[str, str], fallback: Callab
 def build_panel_graph():
     builder = StateGraph(PanelState)
 
-    builder.add_node("panelists", panelist_sequence_node)
+    # Add all nodes
     builder.add_node("summarize_conversation", summarize_conversation)
-    
-    builder.add_conditional_edges(START, should_summarize)
-    builder.add_edge("summarize_conversation", "panelists")
-    
+    builder.add_node("moderator_search_decision", moderator_search_decision)
+    builder.add_node("search", search_node)
+    builder.add_node("panelists", panelist_sequence_node)
     builder.add_node("moderator", moderator_node)
+
+    # Routing from START: check if summarization is needed
+    builder.add_conditional_edges(START, should_summarize)
+
+    # After summarization, go to search decision
+    builder.add_edge("summarize_conversation", "moderator_search_decision")
+
+    # After search decision, conditionally route to search or directly to panelists
+    builder.add_conditional_edges("moderator_search_decision", should_search)
+
+    # After search, go to panelists
+    builder.add_edge("search", "panelists")
+
+    # After panelists, go to moderator
     builder.add_edge("panelists", "moderator")
+
+    # Moderator completes the discussion
     builder.add_edge("moderator", END)
 
     if use_in_memory_checkpointer():
