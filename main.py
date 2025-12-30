@@ -1,9 +1,12 @@
 """FastAPI application exposing the /ask endpoint."""
+import json
 import logging
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
@@ -89,6 +92,119 @@ async def ask(req: AskRequest) -> AskResponse:
         thread_id=req.thread_id,
         summary=result["summary"],
         panel_responses=result["panel_responses"],
+    )
+
+
+@app.post("/ask-stream")
+async def ask_stream(req: AskRequest):
+    """Streaming endpoint that provides real-time status updates."""
+
+    async def event_stream() -> AsyncIterator[str]:
+        """Generate Server-Sent Events for graph execution."""
+
+        attachments = req.attachments or []
+        attachment_md = "\n".join(
+            f"![user attachment {idx + 1}]({url})" for idx, url in enumerate(attachments)
+        )
+        question_text = req.question.strip() or "See attached images."
+        if attachment_md:
+            question_text = f"{question_text}\n\nAttached images:\n{attachment_md}"
+
+        state = {
+            "messages": [HumanMessage(content=question_text)],
+            "panel_responses": {},
+            "summary": None,
+            "search_results": None,
+            "needs_search": False,
+        }
+
+        config = {
+            "configurable": {
+                "thread_id": req.thread_id,
+                "panelists": [panelist.model_dump() for panelist in req.panelists]
+                if req.panelists
+                else None,
+                "provider_keys": {k: v for k, v in (req.provider_keys or {}).items() if v},
+            }
+        }
+
+        # Map node names to user-friendly status messages
+        node_status_map = {
+            "summarize_conversation": "Summarizing conversation history...",
+            "moderator_search_decision": "Moderator is analyzing the question...",
+            "search": "Searching the web...",
+            "panelists": "Panel is discussing...",
+            "moderator": "Moderating the discussion...",
+        }
+
+        try:
+            # Track accumulated state across node executions
+            accumulated_state = {
+                "panel_responses": {},
+                "summary": None,
+            }
+
+            # Stream events from the graph
+            async for event in panel_graph.astream(state, config=config):
+                for node_name, node_output in event.items():
+                    # Send status update for each node
+                    if node_name in node_status_map:
+                        status_message = node_status_map[node_name]
+                        yield f"data: {json.dumps({'type': 'status', 'message': status_message})}\n\n"
+
+                    # Accumulate panel_responses from panelists node
+                    if node_name == "panelists" and "panel_responses" in node_output:
+                        accumulated_state["panel_responses"].update(node_output["panel_responses"])
+
+                    # Get summary from moderator node
+                    if node_name == "moderator" and "summary" in node_output:
+                        accumulated_state["summary"] = node_output["summary"]
+
+            # Send the complete result with accumulated state
+            if accumulated_state["summary"]:
+                # Check if the summary indicates an error condition
+                summary_lower = accumulated_state["summary"].lower()
+                is_error_response = any(
+                    phrase in summary_lower
+                    for phrase in [
+                        "rate limiting",
+                        "rate limit",
+                        "context length limitations",
+                        "unable to generate summary",
+                        "cannot process this request",
+                    ]
+                )
+
+                if is_error_response:
+                    # Send as error event instead of result
+                    error_data = {"type": "error", "message": accumulated_state["summary"]}
+                    yield f"data: {json.dumps(error_data)}\n\n"
+                else:
+                    # Normal result
+                    result_data = {
+                        "type": "result",
+                        "thread_id": req.thread_id,
+                        "summary": accumulated_state["summary"],
+                        "panel_responses": accumulated_state["panel_responses"],
+                    }
+                    yield f"data: {json.dumps(result_data)}\n\n"
+
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except Exception as e:
+            logger.exception("Error during streaming: %s", e)
+            error_data = {"type": "error", "message": str(e)}
+            yield f"data: {json.dumps(error_data)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
     )
 
 

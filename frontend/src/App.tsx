@@ -1,7 +1,7 @@
 import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { askPanel } from "./api";
+import { askPanel, askPanelStream } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
 import { ThemeToggle } from "./components/theme-toggle";
@@ -55,12 +55,14 @@ const MessageBubble = memo(function MessageBubble({
   entry,
   onToggle,
   isLatest = false,
-  messageRef
+  messageRef,
+  loadingStatus = "Panel is thinking..."
 }: {
   entry: MessageEntry;
   onToggle: () => void;
   isLatest?: boolean;
   messageRef?: React.RefObject<HTMLDivElement>;
+  loadingStatus?: string;
 }) {
   return (
     <motion.article
@@ -173,7 +175,7 @@ const MessageBubble = memo(function MessageBubble({
                   transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
                 />
               </motion.div>
-              <span className="text-[13px] text-muted-foreground/60">Panel is thinking...</span>
+              <span className="text-[13px] text-muted-foreground/60">{loadingStatus}</span>
             </div>
           )}
         </motion.div>
@@ -223,6 +225,7 @@ export default function App() {
   const [modelStatus, setModelStatus] = useState<ProviderModelStatusMap>({});
   const [configOpen, setConfigOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState<string>("Panel is thinking...");
   const [error, setError] = useState<string | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const newThreadInputRef = useRef<HTMLInputElement>(null);
@@ -338,27 +341,45 @@ export default function App() {
       }));
 
       try {
-        const result = await askPanel({
-          thread_id: threadId.trim(),
-          question: sanitizedQuestion,
-          attachments,
-          panelists: preparedPanelists,
-          provider_keys: sanitizedProviderKeys,
-        });
-
-        // Update the entry with the actual response
-        setConversations((prev) => ({
-          ...prev,
-          [threadId]: prev[threadId]?.map((entry) =>
-            entry.id === entryId
-              ? {
-                  ...entry,
-                  summary: result.summary,
-                  panel_responses: result.panel_responses,
-                }
-              : entry
-          ) ?? [],
-        }));
+        await askPanelStream(
+          {
+            thread_id: threadId.trim(),
+            question: sanitizedQuestion,
+            attachments,
+            panelists: preparedPanelists,
+            provider_keys: sanitizedProviderKeys,
+          },
+          {
+            onStatus: (message) => {
+              setLoadingStatus(message);
+            },
+            onResult: (result) => {
+              // Update the entry with the actual response
+              setConversations((prev) => ({
+                ...prev,
+                [threadId]: prev[threadId]?.map((entry) =>
+                  entry.id === entryId
+                    ? {
+                        ...entry,
+                        summary: result.summary,
+                        panel_responses: result.panel_responses,
+                      }
+                    : entry
+                ) ?? [],
+              }));
+            },
+            onError: (err) => {
+              // Remove the optimistic entry on error
+              setConversations((prev) => ({
+                ...prev,
+                [threadId]: prev[threadId]?.filter((entry) => entry.id !== entryId) ?? [],
+              }));
+              setError(err.message);
+              setLoading(false);
+              setLoadingStatus("Panel is thinking..."); // Reset status
+            },
+          }
+        );
       } catch (err) {
         // Remove the optimistic entry on error
         setConversations((prev) => ({
@@ -369,6 +390,7 @@ export default function App() {
         throw err;
       } finally {
         setLoading(false);
+        setLoadingStatus("Panel is thinking..."); // Reset status
       }
     },
     [loading, preparedPanelists, sanitizedProviderKeys, threadId]
@@ -696,6 +718,7 @@ export default function App() {
                   onToggle={() => toggleEntry(index)}
                   isLatest={index === messages.length - 1}
                   messageRef={index === messages.length - 1 ? latestMessageRef : undefined}
+                  loadingStatus={loadingStatus}
                 />
               ))}
             </div>
