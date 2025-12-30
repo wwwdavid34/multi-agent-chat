@@ -6,6 +6,7 @@ import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
 import { ThemeToggle } from "./components/theme-toggle";
 import { fetchModelsForProvider, PROVIDER_LABELS } from "./lib/modelProviders";
+import { findBestModelMatch } from "./lib/modelMatcher";
 const DEFAULT_THREAD_ID = "demo-thread";
 const parseJSON = (value, fallback) => {
     try {
@@ -481,18 +482,19 @@ export default function App() {
                 if (!models.length) {
                     return { ...panelist, model: "" };
                 }
-                // Keep the current model if it exists in the fetched list
-                const hasModel = models.some((model) => model.id === panelist.model);
-                if (hasModel) {
-                    return panelist;
+                // If panelist has no model, set to first available
+                if (!panelist.model) {
+                    return { ...panelist, model: models[0].id };
                 }
-                // If model not found but panelist already has a model set, keep it
-                // (preset models might not be in the API response yet)
-                if (panelist.model) {
-                    return panelist;
+                // Try to find best match for the current model
+                const bestMatch = findBestModelMatch(panelist.model, models);
+                if (bestMatch) {
+                    // Found a match - use it
+                    return { ...panelist, model: bestMatch.id };
                 }
-                // Only set to first model if panelist doesn't have a model
-                return { ...panelist, model: models[0].id };
+                // No match found - keep the original model
+                // (might be a valid model not in the API response)
+                return panelist;
             }));
         }
         catch (err) {
