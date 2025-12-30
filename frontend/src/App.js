@@ -549,8 +549,14 @@ export default function App() {
         }));
     }, [providerModels, providerKeys, handleFetchProviderModels]);
     const handleLoadPreset = useCallback(async (preset) => {
-        // Set panelists from preset first
-        setPanelists(preset.panelists);
+        // Regenerate names based on current naming logic to ensure consistency
+        const panelistsWithUpdatedNames = preset.panelists.map((panelist, index, arr) => {
+            const uniqueName = generateUniquePanelistName(panelist.provider, panelist.model, arr.slice(0, index), // Only consider panelists before this one
+            panelist.id);
+            return { ...panelist, name: uniqueName };
+        });
+        // Set panelists with regenerated names
+        setPanelists(panelistsWithUpdatedNames);
         // Auto-fetch models for providers used in the preset
         const providersUsed = new Set(preset.panelists.map((p) => p.provider));
         for (const provider of providersUsed) {
