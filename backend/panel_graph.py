@@ -37,6 +37,10 @@ class PanelState(TypedDict):
     conversation_summary: str
     search_results: Optional[str]  # Web search results shared among panelists
     needs_search: bool  # Whether moderator determined search is needed
+    debate_mode: bool  # Whether debate mode is enabled
+    debate_round: int  # Current debate round number
+    max_debate_rounds: int  # Maximum number of debate rounds
+    consensus_reached: bool  # Whether panelists have reached consensus
 
 
 class PanelistConfig(TypedDict):
@@ -340,6 +344,29 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
         history = [search_context] + history
         logger.info("Injected search results into panelist context")
 
+    # In debate mode (round > 0), inject other panelists' responses for debate context
+    debate_mode = state.get("debate_mode", False)
+    debate_round = state.get("debate_round", 0)
+
+    if debate_mode and debate_round > 0 and panel_responses:
+        panelist_names = list(panel_responses.keys())
+        debate_context = SystemMessage(
+            content=f"=== DEBATE ROUND {debate_round} ===\n\n"
+                   f"You are participating in a panel debate with: {', '.join(panelist_names)}\n\n"
+                   f"INSTRUCTIONS:\n"
+                   f"- Review the responses from other panelists below\n"
+                   f"- You can TAG specific panelists using @Name syntax (e.g., '@ChatGPT, I disagree because...')\n"
+                   f"- Tagging helps focus your response and reduces confusion in multi-agent discussions\n"
+                   f"- Address specific points, identify agreements/disagreements, and refine your perspective\n"
+                   f"- Build upon ideas or challenge arguments from other panelists\n\n"
+                   f"Previous Round Responses:\n\n" +
+                   "\n\n".join(f"{name}:\n{resp}" for name, resp in panel_responses.items()) +
+                   f"\n\n{'='*50}\n\n"
+                   f"Now provide your response for Round {debate_round} (use @Name to tag specific panelists):"
+        )
+        history = [debate_context] + history
+        logger.info(f"Injected debate context for round {debate_round}")
+
     new_messages: List[AnyMessage] = []
 
     runners = [_build_runner(p, provider_keys) for p in panel_configs]
@@ -550,6 +577,74 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
             )
 
 
+async def consensus_checker_node(state: PanelState) -> Dict[str, Any]:
+    """
+    Evaluate if panelists have reached consensus on their responses.
+
+    Uses the moderator model to analyze if there's substantial agreement
+    or if continued debate would be beneficial.
+    """
+    panel_responses = state.get("panel_responses", {})
+    debate_round = state.get("debate_round", 0)
+
+    if len(panel_responses) < 2:
+        # Can't have consensus with less than 2 panelists
+        return {"consensus_reached": True}
+
+    panel_text = "\n\n".join(
+        f"{name}:\n{resp}" for name, resp in panel_responses.items()
+    )
+
+    consensus_prompt = f"""You are evaluating whether a panel of AI agents has reached consensus.
+
+Current debate round: {debate_round}
+
+Panel responses:
+{panel_text}
+
+Analyze if the panelists have reached substantial consensus or if they significantly disagree.
+
+Consider consensus reached if:
+- Panelists agree on the main points and conclusions
+- Minor differences in phrasing or examples don't constitute disagreement
+- They're converging toward a unified answer
+
+Consider consensus NOT reached if:
+- Panelists have fundamentally different interpretations or conclusions
+- They contradict each other on key points
+- They're proposing different solutions or approaches
+- Further debate could help reconcile their views
+
+Respond in this exact format:
+CONSENSUS: [YES or NO]
+REASONING: [Brief explanation of why consensus is or isn't reached]
+KEY_DISAGREEMENTS: [If NO, list the main points of disagreement]
+"""
+
+    response = await moderator_model.ainvoke([HumanMessage(content=consensus_prompt)])
+    decision_text = response.content
+
+    # Parse decision
+    consensus_reached = "CONSENSUS: YES" in decision_text.upper()
+
+    # Extract reasoning for logging
+    reasoning = "No reasoning provided"
+    if "REASONING:" in decision_text:
+        reasoning_section = decision_text.split("REASONING:", 1)[1]
+        if "KEY_DISAGREEMENTS:" in reasoning_section:
+            reasoning = reasoning_section.split("KEY_DISAGREEMENTS:")[0].strip()
+        else:
+            reasoning = reasoning_section.strip()
+
+    logger.info(f"Consensus check (round {debate_round}): {'YES' if consensus_reached else 'NO'}")
+    logger.info(f"Reasoning: {reasoning}")
+
+    return {
+        "consensus_reached": consensus_reached,
+        "debate_round": debate_round + 1,  # Increment for next round
+    }
+
+
 def summarize_conversation(state: PanelState) -> Dict[str, Any]:
     summary = state.get("conversation_summary", "")
     messages = state.get("messages", [])
@@ -591,6 +686,63 @@ def should_search(state: PanelState) -> str:
     """Route to search node if moderator determined search is needed."""
     if state.get("needs_search", False):
         return "search"
+    return "panelists"
+
+
+def should_continue_debate(state: PanelState) -> str:
+    """
+    Decide whether to continue debating or proceed to final moderation.
+
+    Routes to:
+    - "consensus_checker" if debate mode is on and we haven't hit max rounds
+    - "moderator" if debate mode is off, consensus reached, or max rounds hit
+    """
+    debate_mode = state.get("debate_mode", False)
+
+    if not debate_mode:
+        # Debate mode off, go straight to moderator
+        return "moderator"
+
+    debate_round = state.get("debate_round", 0)
+    max_rounds = state.get("max_debate_rounds", 3)
+    consensus_reached = state.get("consensus_reached", False)
+
+    # If this is the first round (round 0), always check for consensus
+    if debate_round == 0:
+        return "consensus_checker"
+
+    # Check if we should continue debating
+    if consensus_reached:
+        logger.info("Consensus reached, ending debate")
+        return "moderator"
+
+    if debate_round >= max_rounds:
+        logger.info(f"Max debate rounds ({max_rounds}) reached, ending debate")
+        return "moderator"
+
+    # Continue debating
+    logger.info(f"Continuing debate (round {debate_round}/{max_rounds})")
+    return "consensus_checker"
+
+
+def after_consensus_check(state: PanelState) -> str:
+    """
+    After checking consensus, decide whether to loop back for another debate round
+    or proceed to final moderation.
+    """
+    consensus_reached = state.get("consensus_reached", False)
+    debate_round = state.get("debate_round", 1)  # Already incremented by consensus_checker
+    max_rounds = state.get("max_debate_rounds", 3)
+
+    if consensus_reached:
+        logger.info("Consensus reached after check, proceeding to moderator")
+        return "moderator"
+
+    if debate_round > max_rounds:
+        logger.info(f"Max rounds ({max_rounds}) exceeded, proceeding to moderator")
+        return "moderator"
+
+    logger.info(f"No consensus, continuing to debate round {debate_round}")
     return "panelists"
 
 
@@ -669,6 +821,7 @@ def build_panel_graph():
     builder.add_node("moderator_search_decision", moderator_search_decision)
     builder.add_node("search", search_node)
     builder.add_node("panelists", panelist_sequence_node)
+    builder.add_node("consensus_checker", consensus_checker_node)
     builder.add_node("moderator", moderator_node)
 
     # Routing from START: check if summarization is needed
@@ -683,8 +836,11 @@ def build_panel_graph():
     # After search, go to panelists
     builder.add_edge("search", "panelists")
 
-    # After panelists, go to moderator
-    builder.add_edge("panelists", "moderator")
+    # After panelists, conditionally check if we should continue debating or go to moderator
+    builder.add_conditional_edges("panelists", should_continue_debate)
+
+    # After consensus check, decide to loop back to panelists or go to moderator
+    builder.add_conditional_edges("consensus_checker", after_consensus_check)
 
     # Moderator completes the discussion
     builder.add_edge("moderator", END)
