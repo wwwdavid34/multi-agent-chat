@@ -27,6 +27,8 @@ interface PanelConfiguratorProps {
   onLoadPreset: (preset: PanelistPreset) => void;
 }
 
+type TabType = "api-keys" | "panelists" | "presets";
+
 export function PanelConfigurator({
   open,
   onClose,
@@ -43,6 +45,7 @@ export function PanelConfigurator({
   onLoadPreset,
 }: PanelConfiguratorProps) {
   const canAddMore = panelists.length < maxPanelists;
+  const [activeTab, setActiveTab] = useState<TabType>("panelists");
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [presets, setPresets] = useState<PanelistPreset[]>(() => loadPresets());
@@ -116,39 +119,83 @@ export function PanelConfigurator({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/20 backdrop-blur-sm"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          onClick={onClose}
         >
-          <div className="flex-1 bg-foreground/20 backdrop-blur-sm" onClick={onClose} />
           <motion.div
-            initial={{ x: 420 }}
-            animate={{ x: 0 }}
-            exit={{ x: 420 }}
-            transition={{ type: "spring", stiffness: 280, damping: 28 }}
-            className="w-full max-w-xl h-full bg-background text-foreground shadow-2xl px-6 py-7 overflow-y-auto border-l border-border"
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="w-full max-w-4xl max-h-[90vh] bg-background text-foreground shadow-2xl rounded-2xl border border-border flex flex-col"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-4">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-4 px-6 py-5 border-b border-border">
               <div>
-                <p className="text-xs tracking-wide text-muted-foreground mb-1 font-medium">
-                  Configuration
+                <h2 className="text-xl font-semibold m-0">Panel Settings</h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Configure API keys, panelists, and presets
                 </p>
-                <h2 className="text-2xl font-semibold m-0">Panel Settings</h2>
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg w-10 h-10 border border-border flex items-center justify-center hover:bg-muted transition-colors text-xl"
-                aria-label="Close configuration"
+                className="rounded-lg w-9 h-9 border border-border flex items-center justify-center hover:bg-muted transition-colors text-xl"
+                aria-label="Close"
               >
                 ×
               </button>
             </div>
 
-            <section className="mt-8 space-y-4">
-              <header>
-                <h3 className="text-base font-semibold m-0">Provider API Keys</h3>
+            {/* Tabs */}
+            <div className="flex gap-1 px-6 pt-4 border-b border-border">
+              <button
+                type="button"
+                onClick={() => setActiveTab("panelists")}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeTab === "panelists"
+                    ? "bg-accent/10 text-accent border-b-2 border-accent"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                }`}
+              >
+                Panelists
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("presets")}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeTab === "presets"
+                    ? "bg-accent/10 text-accent border-b-2 border-accent"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                }`}
+              >
+                Presets
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("api-keys")}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeTab === "api-keys"
+                    ? "bg-accent/10 text-accent border-b-2 border-accent"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                }`}
+              >
+                API Keys
+              </button>
+            </div>
+
+            {/* Tab Content - Scrollable */}
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              {/* API Keys Tab */}
+              {activeTab === "api-keys" && (
+                <div>
+                <section className="space-y-4">
+                  <header>
+                    <h3 className="text-base font-semibold m-0">Provider API Keys</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   Keys are stored locally in your browser and only used to fetch model lists.
                 </p>
@@ -245,9 +292,13 @@ export function PanelConfigurator({
                 })}
               </div>
             </section>
+                </div>
+              )}
 
-            {/* Presets Section */}
-            <section className="mt-10 space-y-4">
+              {/* Presets Tab */}
+              {activeTab === "presets" && (
+                <div>
+            <section className="space-y-4">
               <header>
                 <h3 className="text-base font-semibold m-0">Panelist Presets</h3>
                 <p className="text-sm text-muted-foreground mt-1">
@@ -386,8 +437,13 @@ export function PanelConfigurator({
                 </motion.div>
               )}
             </section>
+                </div>
+              )}
 
-            <section className="mt-10">
+              {/* Panelists Tab */}
+              {activeTab === "panelists" && (
+                <div>
+            <section>
               <header className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold m-0">Panelists</h3>
@@ -538,6 +594,20 @@ export function PanelConfigurator({
                 ))}
               </ul>
             </section>
+                </div>
+              )}
+            </div>
+
+            {/* Footer with Close Button */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border-none bg-foreground text-background px-6 py-2 text-sm font-medium hover:opacity-90 transition-opacity"
+              >
+                Close
+              </button>
+            </div>
           </motion.div>
         </motion.div>
       )}
