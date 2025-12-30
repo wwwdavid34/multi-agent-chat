@@ -834,8 +834,18 @@ export default function App() {
             if (!models.length) {
               return { ...panelist, model: "" };
             }
+            // Keep the current model if it exists in the fetched list
             const hasModel = models.some((model) => model.id === panelist.model);
-            return hasModel ? panelist : { ...panelist, model: models[0].id };
+            if (hasModel) {
+              return panelist;
+            }
+            // If model not found but panelist already has a model set, keep it
+            // (preset models might not be in the API response yet)
+            if (panelist.model) {
+              return panelist;
+            }
+            // Only set to first model if panelist doesn't have a model
+            return { ...panelist, model: models[0].id };
           })
         );
       } catch (err) {
@@ -853,6 +863,7 @@ export default function App() {
 
   const handleLoadPreset = useCallback(
     async (preset: import("./lib/presetManager").PanelistPreset) => {
+      // Set panelists from preset first
       setPanelists(preset.panelists);
 
       // Auto-fetch models for providers used in the preset
@@ -864,7 +875,8 @@ export default function App() {
         const hasModels = (providerModels[provider]?.length ?? 0) > 0;
 
         if (hasKey && !hasModels) {
-          // Fetch models in the background
+          // Fetch models - when completed, handleFetchProviderModels will
+          // validate the preset's models and keep them if they exist
           handleFetchProviderModels(provider).catch((err) => {
             console.error(`Failed to auto-fetch models for ${provider}:`, err);
           });
