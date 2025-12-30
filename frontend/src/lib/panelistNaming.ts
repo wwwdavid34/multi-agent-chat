@@ -36,9 +36,19 @@ export function generateFriendlyModelName(provider: LLMProvider, modelId: string
 
   // Claude models
   if (provider === "claude") {
-    if (modelLower.includes("opus")) return "Claude Opus";
-    if (modelLower.includes("sonnet")) return "Claude Sonnet";
-    if (modelLower.includes("haiku")) return "Claude Haiku";
+    // Extract version (e.g., "3.5", "4", "4.5")
+    const versionMatch = modelLower.match(/(\d+(?:\.\d+)?)/);
+    const version = versionMatch ? versionMatch[1] : "";
+
+    if (modelLower.includes("opus")) {
+      return version ? `Claude ${version} Opus` : "Claude Opus";
+    }
+    if (modelLower.includes("sonnet")) {
+      return version ? `Claude ${version} Sonnet` : "Claude Sonnet";
+    }
+    if (modelLower.includes("haiku")) {
+      return version ? `Claude ${version} Haiku` : "Claude Haiku";
+    }
   }
 
   // Gemini models
