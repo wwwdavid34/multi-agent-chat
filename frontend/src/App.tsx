@@ -67,16 +67,16 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <motion.article
       ref={messageRef}
-      className="flex flex-col gap-7 min-w-0"
+      className="flex flex-col gap-6 min-w-0"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
     >
       {/* User message */}
-      <div className="flex flex-col items-end self-end text-right gap-2 w-full max-w-[88%] sm:max-w-[68%]">
+      <div className="flex flex-col items-end self-end text-right gap-2 w-full max-w-[85%] sm:max-w-[75%] md:max-w-[65%]">
         <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">You</span>
         <motion.div
-          className="w-full bg-foreground text-background rounded-[20px] rounded-br-sm p-6 shadow-sm break-words"
+          className="w-full bg-foreground text-background rounded-2xl px-5 py-4 shadow-sm break-words"
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
@@ -101,10 +101,10 @@ const MessageBubble = memo(function MessageBubble({
       </div>
 
       {/* Assistant response */}
-      <div className="flex flex-col items-start self-start text-left gap-2 w-full max-w-[88%] sm:max-w-[78%]">
+      <div className="flex flex-col items-start self-start text-left gap-2 w-full">
         <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">Panel</span>
         <motion.div
-          className="w-full bg-card border border-border/60 rounded-[20px] rounded-bl-sm shadow-sm p-6 break-words"
+          className="w-full break-words"
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
@@ -667,8 +667,9 @@ export default function App() {
         )}
       </aside>
 
-      <main className="flex-1 overflow-hidden bg-transparent">
-        <div className="mx-auto flex h-full max-w-4xl flex-col gap-5 min-w-0 px-4 md:px-6 lg:px-8 py-6">
+      <main className="flex-1 overflow-hidden bg-transparent flex flex-col">
+        {/* Header and panelist info - constrained */}
+        <div className="mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-6 flex flex-col gap-5">
           <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="min-w-0">
               <p className="m-0 text-[11px] text-muted-foreground/70 tracking-wider uppercase font-medium">Thread</p>
@@ -700,53 +701,60 @@ export default function App() {
               </span>
             ))}
           </div>
+        </div>
 
-          <section className="flex flex-1 min-h-0 flex-col rounded-2xl bg-card/50 border border-border/60 shadow-sm relative backdrop-blur-sm overflow-hidden">
-            <div
-              className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-10 px-4 sm:px-8 lg:px-10 py-10 pb-8 scroll-smooth"
-              ref={messageListRef}
-            >
-              {messages.length === 0 && (
-                <div className="flex-1 flex items-center justify-center">
-                  <p className="text-muted-foreground/60 text-center text-sm">Start a conversation by asking a question below.</p>
-                </div>
-              )}
-              {messages.map((entry, index) => (
-                <MessageBubble
-                  key={entry.id}
-                  entry={entry}
-                  onToggle={() => toggleEntry(index)}
-                  isLatest={index === messages.length - 1}
-                  messageRef={index === messages.length - 1 ? latestMessageRef : undefined}
-                  loadingStatus={loadingStatus}
-                />
-              ))}
+        {/* Chat section - full width with scrollbar at browser edge */}
+        <section className="flex flex-1 min-h-0 flex-col relative">
+            {/* Scrollable messages area */}
+            <div className="flex-1 overflow-y-auto scroll-smooth" ref={messageListRef}>
+              <div className="flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6">
+                {messages.length === 0 && (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-muted-foreground/60 text-center text-sm">Start a conversation by asking a question below.</p>
+                  </div>
+                )}
+                {messages.map((entry, index) => (
+                  <MessageBubble
+                    key={entry.id}
+                    entry={entry}
+                    onToggle={() => toggleEntry(index)}
+                    isLatest={index === messages.length - 1}
+                    messageRef={index === messages.length - 1 ? latestMessageRef : undefined}
+                    loadingStatus={loadingStatus}
+                  />
+                ))}
+              </div>
             </div>
 
             {/* Gradient fade for smooth transition to composer */}
-            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none" />
+            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none z-[5]" />
 
-            <AnimatePresence>
-              {showScrollToBottom && (
-                <motion.button
-                  type="button"
-                  className="absolute right-6 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 z-10"
-                  onClick={handleScrollToBottom}
-                  initial={{ opacity: 0, y: 10, scale: 0.9 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
-                    <path d="M12 16l-6-6h12z"/>
-                  </svg>
-                  Jump to latest
-                </motion.button>
-              )}
-            </AnimatePresence>
+            {/* Scroll button positioned relative to content width */}
+            <div className="absolute bottom-0 left-0 right-0 pointer-events-none z-[15]">
+              <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 relative">
+                <AnimatePresence>
+                  {showScrollToBottom && (
+                    <motion.button
+                      type="button"
+                      className="absolute right-0 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 pointer-events-auto"
+                      onClick={handleScrollToBottom}
+                      initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                        <path d="M12 16l-6-6h12z"/>
+                      </svg>
+                      Jump to latest
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
 
-            {/* Floating composer area */}
-            <div className="px-4 sm:px-8 lg:px-10 pt-8 pb-5 relative z-10">
+            {/* Fixed composer area at bottom */}
+            <div className="pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6">
               <ChatComposer
                 loading={loading}
                 error={error}
@@ -756,7 +764,6 @@ export default function App() {
               />
             </div>
           </section>
-        </div>
       </main>
       <PanelConfigurator
         open={configOpen}
@@ -792,6 +799,23 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
 
   const hasContent = Boolean(question.trim()) || attachments.length > 0;
   const canSubmit = hasContent && !loading;
+
+  // Auto-resize textarea based on content
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // Reset height to get accurate scrollHeight
+    textarea.style.height = 'auto';
+
+    // Set height based on content, with max limit
+    const maxHeight = 120; // ~5 lines max
+    const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${newHeight}px`;
+
+    // Only show scrollbar when content exceeds max height
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [question]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -852,8 +876,8 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
               if (error) onClearError();
             }}
             placeholder="Send a message..."
-            rows={3}
-            className="w-full border-none rounded-2xl p-4 md:p-5 pr-4 md:pr-5 pb-[72px] md:pb-20 text-sm md:text-[15px] font-inherit resize-vertical min-h-[140px] md:min-h-[150px] bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed"
+            rows={1}
+            className="w-full border-none rounded-2xl px-4 md:px-5 pt-3.5 md:pt-4 pb-14 md:pb-16 text-sm md:text-[15px] font-inherit resize-none overflow-y-hidden bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed"
           />
 
           {/* Button container with separator */}
