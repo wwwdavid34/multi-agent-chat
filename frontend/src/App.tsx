@@ -356,6 +356,7 @@ export default function App() {
   );
   const [modelStatus, setModelStatus] = useState<ProviderModelStatusMap>({});
   const [configOpen, setConfigOpen] = useState(false);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState<string>("Panel is thinking...");
   const [error, setError] = useState<string | null>(null);
@@ -508,8 +509,18 @@ export default function App() {
         setConfigOpen((prev) => !prev);
       }
 
+      // ?: Show keyboard shortcuts help
+      if (e.key === '?' && !modKey) {
+        e.preventDefault();
+        setShowKeyboardShortcuts(true);
+      }
+
       // Esc: Close modals
       if (e.key === 'Escape') {
+        if (showKeyboardShortcuts) {
+          e.preventDefault();
+          setShowKeyboardShortcuts(false);
+        }
         if (configOpen) {
           e.preventDefault();
           setConfigOpen(false);
@@ -523,7 +534,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyboardShortcut);
     return () => window.removeEventListener('keydown', handleKeyboardShortcut);
-  }, [configOpen, isCreatingThread]);
+  }, [configOpen, isCreatingThread, showKeyboardShortcuts]);
 
   const togglePanelist = useCallback((id: string) => {
     setEnabledPanelists((prev) => {
@@ -1109,6 +1120,18 @@ export default function App() {
               }
             }}
           />
+          <button
+            type="button"
+            onClick={() => setShowKeyboardShortcuts(true)}
+            className="flex items-center justify-center gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all"
+            title="Keyboard Shortcuts"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" />
+            </svg>
+            Keyboard Shortcuts
+          </button>
         </div>
       </aside>
       )}
@@ -1250,6 +1273,76 @@ export default function App() {
         maxPanelists={MAX_PANELISTS}
         onLoadPreset={handleLoadPreset}
       />
+
+      {/* Keyboard Shortcuts Help Modal */}
+      <AnimatePresence>
+        {showKeyboardShortcuts && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowKeyboardShortcuts(false)}
+          >
+            <motion.div
+              className="bg-background text-foreground rounded-2xl shadow-2xl max-w-md w-full p-6 border border-border"
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold m-0">Keyboard Shortcuts</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowKeyboardShortcuts(false)}
+                  className="rounded-lg w-8 h-8 border border-border flex items-center justify-center hover:bg-muted transition-colors text-lg"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between py-2 border-b border-border/40">
+                  <span className="text-sm text-muted-foreground">New thread</span>
+                  <kbd className="px-2 py-1 text-xs font-semibold bg-muted rounded border border-border">
+                    {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl'} + N
+                  </kbd>
+                </div>
+
+                <div className="flex items-center justify-between py-2 border-b border-border/40">
+                  <span className="text-sm text-muted-foreground">Toggle settings</span>
+                  <kbd className="px-2 py-1 text-xs font-semibold bg-muted rounded border border-border">
+                    {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl'} + /
+                  </kbd>
+                </div>
+
+                <div className="flex items-center justify-between py-2 border-b border-border/40">
+                  <span className="text-sm text-muted-foreground">Submit message</span>
+                  <kbd className="px-2 py-1 text-xs font-semibold bg-muted rounded border border-border">
+                    {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl'} + Enter
+                  </kbd>
+                </div>
+
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-sm text-muted-foreground">Close modals</span>
+                  <kbd className="px-2 py-1 text-xs font-semibold bg-muted rounded border border-border">
+                    Esc
+                  </kbd>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-border/40">
+                <p className="text-xs text-muted-foreground text-center">
+                  Press <kbd className="px-1.5 py-0.5 text-xs font-semibold bg-muted rounded border border-border">?</kbd> anytime to show this help
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
