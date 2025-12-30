@@ -6,5 +6,9 @@ interface MarkdownProps {
 }
 
 export function Markdown({ content }: MarkdownProps) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
+  return (
+    <div className="markdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
 }

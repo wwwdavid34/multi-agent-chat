@@ -54,18 +54,14 @@ const createPanelist = (index: number): PanelistConfigPayload => ({
 const MessageBubble = memo(function MessageBubble({ entry, onToggle }: { entry: MessageEntry; onToggle: () => void }) {
   return (
     <motion.article
-      className="flex flex-col gap-4 min-w-0"
-      initial={{ opacity: 0, y: 20 }}
+      className="flex flex-col gap-6 min-w-0"
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
     >
-      <div className="flex flex-col items-end self-end text-right gap-1 w-full max-w-[90%] sm:max-w-[70%]">
-        <span className="text-xs uppercase tracking-widest text-slate-500">You</span>
-        <motion.div
-          className="w-full bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-3xl rounded-br-md p-4 sm:p-5 shadow-lg break-words"
-          whileHover={{ scale: 1.01 }}
-          transition={{ type: "spring", stiffness: 300 }}
-        >
+      <div className="flex flex-col items-end self-end text-right gap-2 w-full max-w-[85%] sm:max-w-[65%]">
+        <span className="text-xs font-medium tracking-wide text-muted-foreground px-1">You</span>
+        <div className="w-full bg-foreground text-background rounded-2xl rounded-br p-5 shadow-sm break-words">
           <Markdown content={entry.question} />
           {entry.attachments.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -74,51 +70,47 @@ const MessageBubble = memo(function MessageBubble({ entry, onToggle }: { entry: 
                   src={src}
                   alt={`attachment-${index + 1}`}
                   key={index}
-                  className="w-16 h-16 object-cover rounded-xl border border-white/60 shadow-sm"
+                  className="w-16 h-16 object-cover rounded-lg border border-background/20 shadow-sm"
                 />
               ))}
             </div>
           )}
-        </motion.div>
+        </div>
       </div>
 
-      <div className="flex flex-col items-start self-start text-left gap-2 w-full max-w-[90%] sm:max-w-[70%]">
-        <span className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400">LLM panel</span>
-        <motion.div
-          className="w-full bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 rounded-3xl rounded-bl-md shadow-lg p-4 sm:p-5 break-words"
-          whileHover={{ scale: 1.01 }}
-          transition={{ type: "spring", stiffness: 280 }}
-        >
+      <div className="flex flex-col items-start self-start text-left gap-2 w-full max-w-[85%] sm:max-w-[75%]">
+        <span className="text-xs font-medium tracking-wide text-muted-foreground px-1">Assistant</span>
+        <div className="w-full bg-card border border-border rounded-2xl rounded-bl shadow-sm p-5 break-words">
           <Markdown content={entry.summary} />
-          <motion.button
+          <button
             type="button"
-            className="mt-3 inline-flex items-center gap-1 text-sm font-semibold bg-transparent text-blue-600 dark:text-blue-400 border-none p-0 cursor-pointer hover:opacity-80 transition-opacity"
+            className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium bg-transparent text-accent border-none p-0 cursor-pointer hover:opacity-70 transition-opacity"
             onClick={onToggle}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
           >
-            {entry.expanded ? "Hide panel responses" : "Show panel responses"}
-            <svg viewBox="0 0 24 24" aria-hidden="true" className={`w-4 h-4 transition-transform ${entry.expanded ? "rotate-180" : ""}`}>
+            {entry.expanded ? "Hide individual responses" : "Show individual responses"}
+            <svg viewBox="0 0 24 24" aria-hidden="true" className={`w-4 h-4 transition-transform duration-200 ${entry.expanded ? "rotate-180" : ""}`}>
               <path fill="currentColor" d="M7 10l5 5 5-5z" />
             </svg>
-          </motion.button>
+          </button>
           {entry.expanded && (
             <motion.div
-              className="mt-4 border-t border-slate-200 dark:border-slate-700 pt-4 grid gap-3"
+              className="mt-5 border-t border-border pt-5 grid gap-4"
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.3 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             >
               {Object.entries(entry.panel_responses).map(([name, text]) => (
-                <article key={name} className="border border-slate-200/70 dark:border-slate-700 rounded-2xl p-3.5 sm:p-4 bg-slate-50 dark:bg-slate-900/70 shadow-sm">
-                  <h4 className="m-0 mb-2 text-slate-900 dark:text-slate-100 text-base">{name}</h4>
-                  <Markdown content={text} />
+                <article key={name} className="border border-border rounded-xl p-4 bg-muted/30">
+                  <h4 className="m-0 mb-2.5 text-card-foreground text-sm font-semibold tracking-wide">{name}</h4>
+                  <div className="text-sm leading-relaxed">
+                    <Markdown content={text} />
+                  </div>
                 </article>
               ))}
             </motion.div>
           )}
-        </motion.div>
+        </div>
       </div>
     </motion.article>
   );
@@ -476,13 +468,13 @@ export default function App() {
   );
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-gradient-to-br from-slate-100 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-      <aside className="hidden lg:flex w-72 flex-shrink-0 bg-white/90 dark:bg-slate-950/85 px-6 py-8 shadow-xl dark:shadow-slate-950 flex-col gap-6 overflow-y-auto border-r border-slate-200/70 dark:border-slate-800/70">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
+      <aside className="hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 overflow-y-auto border-r border-border">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold m-0 text-slate-900 dark:text-slate-100">Threads</h2>
+          <h2 className="text-xl font-semibold m-0 text-foreground">Conversations</h2>
           <button
             type="button"
-            className="w-9 h-9 rounded-full border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-900/70 text-slate-900 dark:text-slate-100 text-xl font-semibold leading-none flex items-center justify-center cursor-pointer hover:border-blue-500 hover:text-blue-500 transition-colors"
+            className="w-9 h-9 rounded-lg border border-border bg-muted/40 text-foreground text-xl font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/40 transition-all"
             onClick={() => {
               setIsCreatingThread(true);
               setNewThreadName("");
@@ -492,30 +484,26 @@ export default function App() {
             +
           </button>
         </div>
-        <ul className="list-none p-0 m-0 flex flex-col gap-3 overflow-y-auto flex-1">
+        <ul className="list-none p-0 m-0 flex flex-col gap-2 overflow-y-auto flex-1">
           {threads.map((id) => (
             <li key={id}>
-              <div
-                className={`flex items-center gap-1.5 rounded-2xl p-2 transition-colors ${
-                  threadId === id ? "bg-sky-100/70 dark:bg-sky-950/40" : "bg-transparent"
-                }`}
-              >
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-between px-4 py-3 rounded-xl border text-sm ${
+                  className={`flex-1 flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm transition-all ${
                     threadId === id
-                      ? "border-blue-600/70 dark:border-blue-500/60 bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300 font-semibold"
-                      : "border-slate-200/80 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-900/70 font-semibold text-slate-900 dark:text-slate-100"
-                  } cursor-pointer transition-all hover:border-blue-500 dark:hover:border-blue-500/70 shadow-sm`}
+                      ? "border-accent/50 bg-accent/5 text-accent font-medium"
+                      : "border-border bg-transparent font-normal text-foreground hover:bg-muted/40 hover:border-muted-foreground/20"
+                  }`}
                   onClick={() => handleThreadSelect(id)}
                 >
-                  <span>{id}</span>
+                  <span className="truncate">{id}</span>
                 </button>
-                <div className="flex gap-1">
-                  <button type="button" onClick={() => handleRenameThread(id)} aria-label="Rename thread" className="border-none bg-transparent cursor-pointer text-sm hover:opacity-70 transition-opacity p-1.5 rounded-full">
+                <div className="flex gap-0.5">
+                  <button type="button" onClick={() => handleRenameThread(id)} aria-label="Rename thread" className="border-none bg-transparent cursor-pointer text-sm hover:opacity-60 transition-opacity p-1.5 rounded">
                     ✏️
                   </button>
-                  <button type="button" onClick={() => handleDeleteThread(id)} aria-label="Delete thread" className="border-none bg-transparent cursor-pointer text-sm hover:opacity-70 transition-opacity p-1.5 rounded-full">
+                  <button type="button" onClick={() => handleDeleteThread(id)} aria-label="Delete thread" className="border-none bg-transparent cursor-pointer text-sm hover:opacity-60 transition-opacity p-1.5 rounded">
                     🗑️
                   </button>
                 </div>
@@ -536,39 +524,39 @@ export default function App() {
               }}
               onKeyDown={handleThreadInputKeyDown}
               placeholder="Name your thread"
-              className="flex-1 rounded-xl border border-slate-300/80 dark:border-slate-700/80 px-3.5 py-2.5 font-inherit bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600/70 dark:focus:ring-blue-500/70 shadow-sm"
+              className="flex-1 rounded-lg border border-border px-3.5 py-2.5 font-inherit bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </form>
         )}
       </aside>
 
       <main className="flex-1 overflow-hidden bg-transparent">
-        <div className="mx-auto flex h-full max-w-5xl flex-col gap-4 min-w-0 px-4 md:px-8 lg:px-10 py-6">
-          <header className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="mx-auto flex h-full max-w-4xl flex-col gap-5 min-w-0 px-4 md:px-8 lg:px-10 py-6">
+          <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="min-w-0">
-              <p className="m-0 uppercase text-xs text-slate-500 dark:text-slate-400 tracking-widest">Thread</p>
-              <h1 className="mt-1 mb-0 text-2xl font-semibold text-slate-900 dark:text-slate-100 truncate">{threadId}</h1>
+              <p className="m-0 text-xs text-muted-foreground tracking-wide font-medium">Thread</p>
+              <h1 className="mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate">{threadId}</h1>
             </div>
-            <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-400">
+            <div className="flex items-center gap-3 text-sm">
               <button
                 type="button"
                 onClick={() => setConfigOpen(true)}
-                className="rounded-full border border-slate-300 dark:border-slate-700 px-4 py-2 font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-500"
+                className="rounded-lg border border-border px-4 py-2 font-medium text-foreground hover:bg-muted/50 hover:border-accent/40 transition-all"
               >
-                Panel settings
+                Settings
               </button>
               <ThemeToggle />
             </div>
           </header>
 
-          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {panelistSummaries.map((summary) => (
               <span
                 key={summary.id}
-                className="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/60 px-3 py-1"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5"
               >
-                <span className="font-semibold text-slate-900 dark:text-slate-100">{summary.name}</span>
-                <span>
+                <span className="font-semibold text-foreground">{summary.name}</span>
+                <span className="text-muted-foreground">
                   · {summary.provider}
                   {summary.model ? ` · ${summary.model}` : ""}
                 </span>
@@ -576,12 +564,12 @@ export default function App() {
             ))}
           </div>
 
-          <section className="flex flex-1 min-h-0 flex-col rounded-[28px] bg-white/80 dark:bg-slate-950/40 border border-white/40 dark:border-slate-800/60 shadow-[0_20px_80px_-32px_rgba(15,23,42,0.6)] backdrop-blur relative">
+          <section className="flex flex-1 min-h-0 flex-col rounded-xl bg-card border border-border shadow-sm relative">
             <div
-              className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 px-3 sm:px-8 lg:px-12 py-8"
+              className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-8 px-3 sm:px-8 lg:px-12 py-8"
               ref={messageListRef}
             >
-              {messages.length === 0 && <p className="text-slate-500 dark:text-slate-400 text-center">Ask a question to start the discussion.</p>}
+              {messages.length === 0 && <p className="text-muted-foreground text-center text-sm">Start a conversation by asking a question below.</p>}
               {messages.map((entry, index) => (
                 <MessageBubble key={entry.id} entry={entry} onToggle={() => toggleEntry(index)} />
               ))}
@@ -589,16 +577,16 @@ export default function App() {
             {showScrollToBottom && (
               <motion.button
                 type="button"
-                className="absolute right-6 bottom-36 md:bottom-40 rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 px-4 py-2 shadow-lg text-sm font-semibold"
+                className="absolute right-6 bottom-36 md:bottom-40 rounded-lg bg-foreground text-background px-4 py-2 shadow-md text-sm font-medium hover:opacity-90 transition-opacity"
                 onClick={handleScrollToBottom}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 20 }}
               >
-                Go to latest
+                Jump to latest
               </motion.button>
             )}
-            <div className="border-t border-slate-200/60 dark:border-slate-800/70 bg-gradient-to-t from-slate-50/80 via-white/60 to-transparent dark:from-slate-900/70 dark:via-slate-950/50 px-3 sm:px-8 lg:px-12 py-6">
+            <div className="border-t border-border bg-card/80 backdrop-blur-sm px-3 sm:px-8 lg:px-12 py-6">
               <ChatComposer
                 loading={loading}
                 error={error}
@@ -685,7 +673,7 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
   return (
     <form className="min-w-0" onSubmit={handleSubmit}>
       <div className="flex flex-col gap-4 min-w-0">
-        <div className="relative rounded-2xl border border-slate-300/45 dark:border-slate-700/45 bg-white/95 dark:bg-slate-900/90 shadow-xl max-w-full">
+        <div className="relative rounded-xl border border-border bg-background max-w-full">
           <textarea
             value={question}
             onChange={(event) => {
@@ -694,12 +682,12 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
             }}
             placeholder="Send a message..."
             rows={3}
-            className="w-full border-none rounded-2xl p-4 md:p-5 pr-16 md:pr-20 pb-14 md:pb-16 text-sm md:text-base font-inherit resize-vertical min-h-[120px] md:min-h-[140px] bg-transparent text-slate-900 dark:text-slate-100 focus:outline-none"
+            className="w-full border-none rounded-xl p-4 md:p-5 pr-16 md:pr-20 pb-14 md:pb-16 text-sm md:text-base font-inherit resize-vertical min-h-[120px] md:min-h-[140px] bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
           <div className="absolute left-4 md:left-5 right-4 md:right-5 bottom-3 md:bottom-4 flex items-center gap-2 md:gap-3">
             <button
               type="button"
-              className="inline-flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3.5 py-1.5 md:py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 text-xs md:text-sm font-semibold cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              className="inline-flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3.5 py-1.5 md:py-2 rounded-lg border border-border bg-muted/40 text-foreground text-xs md:text-sm font-medium cursor-pointer hover:bg-muted transition-colors"
               onClick={() => fileInputRef.current?.click()}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true" className="w-3 h-3 md:w-4 md:h-4">
@@ -708,7 +696,7 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
                   d="M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z"
                 />
               </svg>
-              <span className="hidden sm:inline">Add image</span>
+              <span className="hidden sm:inline">Attach image</span>
               <span className="sm:hidden">Image</span>
             </button>
             <input
@@ -724,13 +712,18 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
             />
             <button
               type="submit"
-              className={`ml-auto w-9 h-9 md:w-11 md:h-11 rounded-full inline-flex items-center justify-center bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-600 dark:to-purple-600 text-white border-none cursor-pointer transition-all ${
+              className={`ml-auto w-9 h-9 md:w-11 md:h-11 rounded-lg inline-flex items-center justify-center bg-accent text-accent-foreground border-none cursor-pointer transition-all ${
                 hasContent ? "opacity-100 scale-100" : "opacity-0 scale-80 translate-y-2"
               }`}
               disabled={!canSubmit}
               aria-label="Send message"
             >
-              {loading ? "..." : (
+              {loading ? (
+                <svg className="w-4 h-4 md:w-5 md:h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                </svg>
+              ) : (
                 <svg viewBox="0 0 24 24" aria-hidden="true" className="w-4 h-4 md:w-5 md:h-5">
                   <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
                 </svg>
@@ -742,7 +735,7 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-3">
             {attachments.map((src, index) => (
-              <div className="relative w-20 h-20 rounded-xl overflow-hidden border border-sky-200 dark:border-sky-900" key={index}>
+              <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-border" key={index}>
                 <img src={src} alt={`preview-${index + 1}`} className="w-full h-full object-cover" />
                 <button
                   type="button"
@@ -750,7 +743,7 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
                     removeAttachment(index);
                     if (error) onClearError();
                   }}
-                  className="absolute top-1 right-1 border-none rounded-full w-5 h-5 text-xs bg-slate-900/75 text-white cursor-pointer hover:bg-slate-900 transition-colors"
+                  className="absolute top-1 right-1 border-none rounded-full w-5 h-5 text-xs bg-foreground/80 text-background cursor-pointer hover:bg-foreground transition-colors"
                 >
                   &times;
                 </button>
@@ -759,7 +752,7 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
           </div>
         )}
 
-        {error && <p className="text-red-700 dark:text-red-400">{error}</p>}
+        {error && <p className="text-destructive text-sm">{error}</p>}
       </div>
     </form>
   );
