@@ -1,17 +1,16 @@
 import type { LLMProvider, PanelistConfigPayload } from "../types";
 /**
- * Extract a friendly short name from a model ID
+ * Get brand name for provider
  * Examples:
- * - "gpt-4o" → "GPT-4o"
- * - "gpt-4o-mini" → "GPT-4o Mini"
- * - "claude-3-5-sonnet-20241022" → "Claude Sonnet"
- * - "gemini-1.5-flash" → "Gemini Flash"
- * - "grok-2-1212" → "Grok 2"
+ * - "openai" → "ChatGPT"
+ * - "claude" → "Claude"
+ * - "gemini" → "Gemini"
+ * - "grok" → "Grok"
  */
-export declare function generateFriendlyModelName(provider: LLMProvider, modelId: string): string;
+export declare function getProviderBrandName(provider: LLMProvider): string;
 /**
- * Generate a unique panelist name based on provider and model
- * Handles duplicates by adding number suffixes (e.g., "GPT-4o 2")
+ * Generate a unique panelist name based on provider
+ * Handles duplicates by adding number suffixes (e.g., "ChatGPT 2", "Claude 3")
  */
 export declare function generateUniquePanelistName(provider: LLMProvider, modelId: string, existingPanelists: PanelistConfigPayload[], currentPanelistId?: string): string;
 /**

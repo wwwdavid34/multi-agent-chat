@@ -19,12 +19,12 @@ const parseJSON = (value, fallback) => {
 };
 const MAX_PANELISTS = 6;
 const DEFAULT_PANELISTS = [
-    { id: "panelist-1", name: "OpenAI", provider: "openai", model: "" },
-    { id: "panelist-2", name: "OpenAI 2", provider: "openai", model: "" },
+    { id: "panelist-1", name: "ChatGPT", provider: "openai", model: "" },
+    { id: "panelist-2", name: "ChatGPT 2", provider: "openai", model: "" },
 ];
 const createPanelist = (existingPanelists) => ({
     id: `panelist-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-    name: "OpenAI", // Will be updated when model is set
+    name: "ChatGPT", // Will be updated with unique suffix if needed
     provider: "openai",
     model: "",
 });
