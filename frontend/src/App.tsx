@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 import { askPanel } from "./api";
 import { Markdown } from "./components/Markdown";
@@ -51,66 +51,132 @@ const createPanelist = (index: number): PanelistConfigPayload => ({
   model: "",
 });
 
-const MessageBubble = memo(function MessageBubble({ entry, onToggle }: { entry: MessageEntry; onToggle: () => void }) {
+const MessageBubble = memo(function MessageBubble({
+  entry,
+  onToggle,
+  isLatest = false,
+  messageRef
+}: {
+  entry: MessageEntry;
+  onToggle: () => void;
+  isLatest?: boolean;
+  messageRef?: React.RefObject<HTMLDivElement>;
+}) {
   return (
     <motion.article
-      className="flex flex-col gap-6 min-w-0"
-      initial={{ opacity: 0, y: 12 }}
+      ref={messageRef}
+      className="flex flex-col gap-7 min-w-0"
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
     >
-      <div className="flex flex-col items-end self-end text-right gap-2 w-full max-w-[85%] sm:max-w-[65%]">
-        <span className="text-xs font-medium tracking-wide text-muted-foreground px-1">You</span>
-        <div className="w-full bg-foreground text-background rounded-2xl rounded-br p-5 shadow-sm break-words">
+      {/* User message */}
+      <div className="flex flex-col items-end self-end text-right gap-2 w-full max-w-[88%] sm:max-w-[68%]">
+        <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">You</span>
+        <motion.div
+          className="w-full bg-foreground text-background rounded-[20px] rounded-br-sm p-6 shadow-sm break-words"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.4, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+        >
           <Markdown content={entry.question} />
           {entry.attachments.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2.5">
               {entry.attachments.map((src, index) => (
-                <img
+                <motion.img
+                  key={index}
                   src={src}
                   alt={`attachment-${index + 1}`}
-                  key={index}
-                  className="w-16 h-16 object-cover rounded-lg border border-background/20 shadow-sm"
+                  className="w-20 h-20 object-cover rounded-xl border-2 border-background/30 shadow-sm"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.3, delay: 0.2 + index * 0.05 }}
                 />
               ))}
             </div>
           )}
-        </div>
+        </motion.div>
       </div>
 
-      <div className="flex flex-col items-start self-start text-left gap-2 w-full max-w-[85%] sm:max-w-[75%]">
-        <span className="text-xs font-medium tracking-wide text-muted-foreground px-1">Assistant</span>
-        <div className="w-full bg-card border border-border rounded-2xl rounded-bl shadow-sm p-5 break-words">
-          <Markdown content={entry.summary} />
-          <button
-            type="button"
-            className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium bg-transparent text-accent border-none p-0 cursor-pointer hover:opacity-70 transition-opacity"
-            onClick={onToggle}
-          >
-            {entry.expanded ? "Hide individual responses" : "Show individual responses"}
-            <svg viewBox="0 0 24 24" aria-hidden="true" className={`w-4 h-4 transition-transform duration-200 ${entry.expanded ? "rotate-180" : ""}`}>
-              <path fill="currentColor" d="M7 10l5 5 5-5z" />
-            </svg>
-          </button>
-          {entry.expanded && (
-            <motion.div
-              className="mt-5 border-t border-border pt-5 grid gap-4"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            >
-              {Object.entries(entry.panel_responses).map(([name, text]) => (
-                <article key={name} className="border border-border rounded-xl p-4 bg-muted/30">
-                  <h4 className="m-0 mb-2.5 text-card-foreground text-sm font-semibold tracking-wide">{name}</h4>
-                  <div className="text-sm leading-relaxed">
-                    <Markdown content={text} />
-                  </div>
-                </article>
-              ))}
-            </motion.div>
+      {/* Assistant response */}
+      <div className="flex flex-col items-start self-start text-left gap-2 w-full max-w-[88%] sm:max-w-[78%]">
+        <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">Panel</span>
+        <motion.div
+          className="w-full bg-card border border-border/60 rounded-[20px] rounded-bl-sm shadow-sm p-6 break-words"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.4, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        >
+          {entry.summary ? (
+            <>
+              <div className="prose prose-sm dark:prose-invert max-w-none">
+                <Markdown content={entry.summary} />
+              </div>
+              <button
+                type="button"
+                className="mt-5 inline-flex items-center gap-2 text-[13px] font-medium bg-transparent text-accent/90 border-none p-0 cursor-pointer hover:text-accent transition-colors"
+                onClick={onToggle}
+              >
+                {entry.expanded ? "Hide individual responses" : "Show individual responses"}
+                <svg viewBox="0 0 24 24" aria-hidden="true" className={`w-3.5 h-3.5 transition-transform duration-200 ${entry.expanded ? "rotate-180" : ""}`}>
+                  <path fill="currentColor" d="M7 10l5 5 5-5z" />
+                </svg>
+              </button>
+              <AnimatePresence>
+                {entry.expanded && (
+                  <motion.div
+                    className="mt-6 border-t border-border/50 pt-6 grid gap-4"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                  >
+                    {Object.entries(entry.panel_responses).map(([name, text], idx) => (
+                      <motion.article
+                        key={name}
+                        className="border border-border/40 rounded-2xl p-5 bg-muted/20"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, delay: idx * 0.05 }}
+                      >
+                        <h4 className="m-0 mb-3 text-foreground text-[13px] font-semibold tracking-wide">{name}</h4>
+                        <div className="text-[13px] leading-relaxed text-muted-foreground">
+                          <Markdown content={text} />
+                        </div>
+                      </motion.article>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          ) : (
+            <div className="flex items-center gap-3">
+              <motion.div
+                className="flex gap-1.5"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.3 }}
+              >
+                <motion.div
+                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
+                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                  transition={{ duration: 1.2, repeat: Infinity, delay: 0 }}
+                />
+                <motion.div
+                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
+                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }}
+                />
+                <motion.div
+                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
+                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
+                />
+              </motion.div>
+              <span className="text-[13px] text-muted-foreground/60">Panel is thinking...</span>
+            </div>
           )}
-        </div>
+        </motion.div>
       </div>
     </motion.article>
   );
@@ -161,8 +227,22 @@ export default function App() {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const newThreadInputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+  const latestMessageRef = useRef<HTMLDivElement>(null);
 
   const messages = conversations[threadId] ?? [];
+
+  // Auto-scroll to latest message when messages change
+  useEffect(() => {
+    if (latestMessageRef.current && messages.length > 0) {
+      // Small delay to allow DOM to update
+      setTimeout(() => {
+        latestMessageRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "end"
+        });
+      }, 100);
+    }
+  }, [messages.length]);
 
   useEffect(() => {
     localStorage.setItem("threadId", threadId);
@@ -239,8 +319,25 @@ export default function App() {
       setLoading(true);
       setError(null);
 
+      const sanitizedQuestion = question.trim() || "See attached images.";
+      const entryId = `${threadId}-${Date.now()}`;
+
+      // Immediately add user message with loading state for assistant response
+      const optimisticEntry: MessageEntry = {
+        id: entryId,
+        question: sanitizedQuestion,
+        attachments,
+        summary: "", // Will be filled when response arrives
+        panel_responses: {},
+        expanded: false,
+      };
+
+      setConversations((prev) => ({
+        ...prev,
+        [threadId]: [...(prev[threadId] ?? []), optimisticEntry],
+      }));
+
       try {
-        const sanitizedQuestion = question.trim() || "See attached images.";
         const result = await askPanel({
           thread_id: threadId.trim(),
           question: sanitizedQuestion,
@@ -248,20 +345,26 @@ export default function App() {
           panelists: preparedPanelists,
           provider_keys: sanitizedProviderKeys,
         });
-        const newEntry: MessageEntry = {
-          id: `${threadId}-${Date.now()}`,
-          question: sanitizedQuestion,
-          attachments,
-          summary: result.summary,
-          panel_responses: result.panel_responses,
-          expanded: false,
-        };
 
+        // Update the entry with the actual response
         setConversations((prev) => ({
           ...prev,
-          [threadId]: [...(prev[threadId] ?? []), newEntry],
+          [threadId]: prev[threadId]?.map((entry) =>
+            entry.id === entryId
+              ? {
+                  ...entry,
+                  summary: result.summary,
+                  panel_responses: result.panel_responses,
+                }
+              : entry
+          ) ?? [],
         }));
       } catch (err) {
+        // Remove the optimistic entry on error
+        setConversations((prev) => ({
+          ...prev,
+          [threadId]: prev[threadId]?.filter((entry) => entry.id !== entryId) ?? [],
+        }));
         setError(err instanceof Error ? err.message : "Something went wrong");
         throw err;
       } finally {
@@ -278,12 +381,13 @@ export default function App() {
     setShowScrollToBottom(false);
   }, []);
 
+  // Track scroll position for showing/hiding scroll button
   useEffect(() => {
     function handleScroll() {
       const el = messageListRef.current;
       if (!el) return;
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      setShowScrollToBottom(distanceFromBottom > 180);
+      setShowScrollToBottom(distanceFromBottom > 300);
     }
 
     handleScroll();
@@ -292,16 +396,6 @@ export default function App() {
     el.addEventListener("scroll", handleScroll);
     return () => el.removeEventListener("scroll", handleScroll);
   }, []);
-
-  useEffect(() => {
-    const el = messageListRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom <= 200) {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-      setShowScrollToBottom(false);
-    }
-  }, [messages.length]);
 
   function toggleEntry(index: number) {
     setConversations((prev) => ({
@@ -469,12 +563,12 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
-      <aside className="hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 overflow-y-auto border-r border-border">
+      <aside className="hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 overflow-y-auto border-r border-border/60">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold m-0 text-foreground">Conversations</h2>
+          <h2 className="text-lg font-semibold m-0 text-foreground tracking-tight">Conversations</h2>
           <button
             type="button"
-            className="w-9 h-9 rounded-lg border border-border bg-muted/40 text-foreground text-xl font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/40 transition-all"
+            className="w-8 h-8 rounded-lg border border-border/60 bg-muted/30 text-foreground text-lg font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/50 transition-all"
             onClick={() => {
               setIsCreatingThread(true);
               setNewThreadName("");
@@ -484,27 +578,48 @@ export default function App() {
             +
           </button>
         </div>
-        <ul className="list-none p-0 m-0 flex flex-col gap-2 overflow-y-auto flex-1">
+        <ul className="list-none p-0 m-0 flex flex-col gap-1.5 overflow-y-auto flex-1">
           {threads.map((id) => (
-            <li key={id}>
-              <div className="flex items-center gap-1.5">
+            <li key={id} className="group">
+              <div className="flex items-center gap-1.5 relative">
                 <button
                   type="button"
-                  className={`flex-1 flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm transition-all ${
+                  className={`flex-1 flex items-center justify-between px-3.5 py-2 rounded-lg border text-[13px] transition-all ${
                     threadId === id
-                      ? "border-accent/50 bg-accent/5 text-accent font-medium"
-                      : "border-border bg-transparent font-normal text-foreground hover:bg-muted/40 hover:border-muted-foreground/20"
+                      ? "border-accent/60 bg-accent/8 text-accent font-medium"
+                      : "border-border/40 bg-transparent font-normal text-foreground hover:bg-muted/30 hover:border-border"
                   }`}
                   onClick={() => handleThreadSelect(id)}
                 >
                   <span className="truncate">{id}</span>
                 </button>
-                <div className="flex gap-0.5">
-                  <button type="button" onClick={() => handleRenameThread(id)} aria-label="Rename thread" className="border-none bg-transparent cursor-pointer text-sm hover:opacity-60 transition-opacity p-1.5 rounded">
-                    ✏️
+
+                {/* Action buttons - visible on hover */}
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                  <button
+                    type="button"
+                    onClick={() => handleRenameThread(id)}
+                    aria-label="Rename thread"
+                    className="border-none bg-muted/40 hover:bg-muted cursor-pointer p-1.5 rounded-md transition-colors"
+                  >
+                    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-foreground/70" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
                   </button>
-                  <button type="button" onClick={() => handleDeleteThread(id)} aria-label="Delete thread" className="border-none bg-transparent cursor-pointer text-sm hover:opacity-60 transition-opacity p-1.5 rounded">
-                    🗑️
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteThread(id)}
+                    aria-label="Delete thread"
+                    className="border-none bg-muted/40 hover:bg-destructive/10 cursor-pointer p-1.5 rounded-md transition-colors group/delete"
+                  >
+                    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-foreground/70 group-hover/delete:text-destructive transition-colors" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <line x1="10" y1="11" x2="10" y2="17" />
+                      <line x1="14" y1="11" x2="14" y2="17" />
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -524,24 +639,24 @@ export default function App() {
               }}
               onKeyDown={handleThreadInputKeyDown}
               placeholder="Name your thread"
-              className="flex-1 rounded-lg border border-border px-3.5 py-2.5 font-inherit bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
+              className="flex-1 rounded-lg border border-border/60 px-3 py-2 text-sm font-inherit bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60 transition-all"
             />
           </form>
         )}
       </aside>
 
       <main className="flex-1 overflow-hidden bg-transparent">
-        <div className="mx-auto flex h-full max-w-4xl flex-col gap-5 min-w-0 px-4 md:px-8 lg:px-10 py-6">
+        <div className="mx-auto flex h-full max-w-4xl flex-col gap-5 min-w-0 px-4 md:px-6 lg:px-8 py-6">
           <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="min-w-0">
-              <p className="m-0 text-xs text-muted-foreground tracking-wide font-medium">Thread</p>
-              <h1 className="mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate">{threadId}</h1>
+              <p className="m-0 text-[11px] text-muted-foreground/70 tracking-wider uppercase font-medium">Thread</p>
+              <h1 className="mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate tracking-tight">{threadId}</h1>
             </div>
-            <div className="flex items-center gap-3 text-sm">
+            <div className="flex items-center gap-2.5 text-sm">
               <button
                 type="button"
                 onClick={() => setConfigOpen(true)}
-                className="rounded-lg border border-border px-4 py-2 font-medium text-foreground hover:bg-muted/50 hover:border-accent/40 transition-all"
+                className="rounded-lg border border-border/60 px-4 py-2 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all"
               >
                 Settings
               </button>
@@ -553,10 +668,10 @@ export default function App() {
             {panelistSummaries.map((summary) => (
               <span
                 key={summary.id}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/40 bg-card/50 px-3 py-1.5"
               >
-                <span className="font-semibold text-foreground">{summary.name}</span>
-                <span className="text-muted-foreground">
+                <span className="font-semibold text-foreground text-[12px]">{summary.name}</span>
+                <span className="text-muted-foreground text-[11px]">
                   · {summary.provider}
                   {summary.model ? ` · ${summary.model}` : ""}
                 </span>
@@ -564,29 +679,51 @@ export default function App() {
             ))}
           </div>
 
-          <section className="flex flex-1 min-h-0 flex-col rounded-xl bg-card border border-border shadow-sm relative">
+          <section className="flex flex-1 min-h-0 flex-col rounded-2xl bg-card/50 border border-border/60 shadow-sm relative backdrop-blur-sm overflow-hidden">
             <div
-              className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-8 px-3 sm:px-8 lg:px-12 py-8"
+              className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-10 px-4 sm:px-8 lg:px-10 py-10 pb-8 scroll-smooth"
               ref={messageListRef}
             >
-              {messages.length === 0 && <p className="text-muted-foreground text-center text-sm">Start a conversation by asking a question below.</p>}
+              {messages.length === 0 && (
+                <div className="flex-1 flex items-center justify-center">
+                  <p className="text-muted-foreground/60 text-center text-sm">Start a conversation by asking a question below.</p>
+                </div>
+              )}
               {messages.map((entry, index) => (
-                <MessageBubble key={entry.id} entry={entry} onToggle={() => toggleEntry(index)} />
+                <MessageBubble
+                  key={entry.id}
+                  entry={entry}
+                  onToggle={() => toggleEntry(index)}
+                  isLatest={index === messages.length - 1}
+                  messageRef={index === messages.length - 1 ? latestMessageRef : undefined}
+                />
               ))}
             </div>
-            {showScrollToBottom && (
-              <motion.button
-                type="button"
-                className="absolute right-6 bottom-36 md:bottom-40 rounded-lg bg-foreground text-background px-4 py-2 shadow-md text-sm font-medium hover:opacity-90 transition-opacity"
-                onClick={handleScrollToBottom}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-              >
-                Jump to latest
-              </motion.button>
-            )}
-            <div className="border-t border-border bg-card/80 backdrop-blur-sm px-3 sm:px-8 lg:px-12 py-6">
+
+            {/* Gradient fade for smooth transition to composer */}
+            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none" />
+
+            <AnimatePresence>
+              {showScrollToBottom && (
+                <motion.button
+                  type="button"
+                  className="absolute right-6 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 z-10"
+                  onClick={handleScrollToBottom}
+                  initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                    <path d="M12 16l-6-6h12z"/>
+                  </svg>
+                  Jump to latest
+                </motion.button>
+              )}
+            </AnimatePresence>
+
+            {/* Floating composer area */}
+            <div className="px-4 sm:px-8 lg:px-10 pt-8 pb-5 relative z-10">
               <ChatComposer
                 loading={loading}
                 error={error}
@@ -628,6 +765,7 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
   const [question, setQuestion] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const hasContent = Boolean(question.trim()) || attachments.length > 0;
   const canSubmit = hasContent && !loading;
@@ -636,12 +774,21 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
     event.preventDefault();
     if (!canSubmit) return;
 
+    // Clear immediately for better UX
+    const currentQuestion = question;
+    const currentAttachments = [...attachments];
+    setQuestion("");
+    setAttachments([]);
+
+    // Refocus textarea
+    textareaRef.current?.focus();
+
     try {
-      await onSend({ question, attachments });
-      setQuestion("");
-      setAttachments([]);
+      await onSend({ question: currentQuestion, attachments: currentAttachments });
     } catch {
-      // Parent handles error state
+      // On error, restore the content
+      setQuestion(currentQuestion);
+      setAttachments(currentAttachments);
     }
   }
 
@@ -672,9 +819,10 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
 
   return (
     <form className="min-w-0" onSubmit={handleSubmit}>
-      <div className="flex flex-col gap-4 min-w-0">
-        <div className="relative rounded-xl border border-border bg-background max-w-full">
+      <div className="flex flex-col gap-3 min-w-0">
+        <div className="relative rounded-2xl border border-border/50 bg-background/95 backdrop-blur-sm max-w-full shadow-sm">
           <textarea
+            ref={textareaRef}
             value={question}
             onChange={(event) => {
               setQuestion(event.target.value);
@@ -682,77 +830,110 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
             }}
             placeholder="Send a message..."
             rows={3}
-            className="w-full border-none rounded-xl p-4 md:p-5 pr-16 md:pr-20 pb-14 md:pb-16 text-sm md:text-base font-inherit resize-vertical min-h-[120px] md:min-h-[140px] bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none"
+            className="w-full border-none rounded-2xl p-4 md:p-5 pr-4 md:pr-5 pb-[72px] md:pb-20 text-sm md:text-[15px] font-inherit resize-vertical min-h-[140px] md:min-h-[150px] bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed"
           />
-          <div className="absolute left-4 md:left-5 right-4 md:right-5 bottom-3 md:bottom-4 flex items-center gap-2 md:gap-3">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3.5 py-1.5 md:py-2 rounded-lg border border-border bg-muted/40 text-foreground text-xs md:text-sm font-medium cursor-pointer hover:bg-muted transition-colors"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="w-3 h-3 md:w-4 md:h-4">
-                <path
-                  fill="currentColor"
-                  d="M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z"
-                />
-              </svg>
-              <span className="hidden sm:inline">Attach image</span>
-              <span className="sm:hidden">Image</span>
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              hidden
-              onChange={(event) => {
-                handleFilesSelected(event.target.files);
-                event.target.value = "";
-              }}
-            />
-            <button
-              type="submit"
-              className={`ml-auto w-9 h-9 md:w-11 md:h-11 rounded-lg inline-flex items-center justify-center bg-accent text-accent-foreground border-none cursor-pointer transition-all ${
-                hasContent ? "opacity-100 scale-100" : "opacity-0 scale-80 translate-y-2"
-              }`}
-              disabled={!canSubmit}
-              aria-label="Send message"
-            >
-              {loading ? (
-                <svg className="w-4 h-4 md:w-5 md:h-5 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+
+          {/* Button container with separator */}
+          <div className="absolute left-0 right-0 bottom-0 pt-3 px-4 md:px-5 pb-3.5 md:pb-4 bg-gradient-to-t from-background/95 via-background/80 to-transparent border-t border-border/20 rounded-b-2xl">
+            <div className="flex items-center gap-2 md:gap-2.5">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border/50 bg-background/90 text-foreground text-xs font-medium cursor-pointer hover:bg-muted/60 hover:border-border transition-all shadow-sm"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="w-3.5 h-3.5">
+                  <path
+                    fill="currentColor"
+                    d="M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z"
+                  />
                 </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" aria-hidden="true" className="w-4 h-4 md:w-5 md:h-5">
-                  <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
-                </svg>
-              )}
-            </button>
+                <span className="hidden sm:inline">Attach</span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(event) => {
+                  handleFilesSelected(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+              <motion.button
+                type="submit"
+                className="ml-auto w-10 h-10 md:w-11 md:h-11 rounded-xl inline-flex items-center justify-center bg-accent text-accent-foreground border-none cursor-pointer hover:opacity-90 transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={!canSubmit}
+                aria-label="Send message"
+                whileHover={{ scale: canSubmit ? 1.05 : 1 }}
+                whileTap={{ scale: canSubmit ? 0.95 : 1 }}
+                animate={{
+                  opacity: hasContent ? 1 : 0.3,
+                  scale: hasContent ? 1 : 0.9
+                }}
+                transition={{ duration: 0.2 }}
+              >
+                {loading ? (
+                  <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className="w-5 h-5">
+                    <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+                  </svg>
+                )}
+              </motion.button>
+            </div>
           </div>
         </div>
 
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-3">
-            {attachments.map((src, index) => (
-              <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-border" key={index}>
-                <img src={src} alt={`preview-${index + 1}`} className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    removeAttachment(index);
-                    if (error) onClearError();
-                  }}
-                  className="absolute top-1 right-1 border-none rounded-full w-5 h-5 text-xs bg-foreground/80 text-background cursor-pointer hover:bg-foreground transition-colors"
+        <AnimatePresence>
+          {attachments.length > 0 && (
+            <motion.div
+              className="flex flex-wrap gap-2.5"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+            >
+              {attachments.map((src, index) => (
+                <motion.div
+                  key={index}
+                  className="relative w-20 h-20 rounded-xl overflow-hidden border-2 border-border/40 shadow-sm group"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  transition={{ duration: 0.2, delay: index * 0.03 }}
                 >
-                  &times;
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+                  <img src={src} alt={`preview-${index + 1}`} className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      removeAttachment(index);
+                      if (error) onClearError();
+                    }}
+                    className="absolute top-1 right-1 border-none rounded-full w-6 h-6 text-xs bg-foreground/90 text-background cursor-pointer hover:bg-foreground transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center font-semibold shadow-sm"
+                  >
+                    ×
+                  </button>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {error && <p className="text-destructive text-sm">{error}</p>}
+        <AnimatePresence>
+          {error && (
+            <motion.p
+              className="text-destructive text-[13px] m-0 px-1"
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }}
+            >
+              {error}
+            </motion.p>
+          )}
+        </AnimatePresence>
       </div>
     </form>
   );
