@@ -70,6 +70,8 @@ const MessageBubble = memo(function MessageBubble({
   onDelete?: () => void;
   onRegenerate?: () => void;
 }) {
+  const [viewMode, setViewMode] = React.useState<"list" | "grid">("list");
+
   return (
     <motion.article
       ref={messageRef}
@@ -178,20 +180,66 @@ const MessageBubble = memo(function MessageBubble({
               <div className="prose prose-sm dark:prose-invert max-w-none">
                 <Markdown content={entry.summary} />
               </div>
-              <button
-                type="button"
-                className="mt-5 inline-flex items-center gap-2 text-[13px] font-medium bg-transparent text-accent/90 border-none p-0 cursor-pointer hover:text-accent transition-colors"
-                onClick={onToggle}
-              >
-                {entry.expanded ? "Hide individual responses" : "Show individual responses"}
-                <svg viewBox="0 0 24 24" aria-hidden="true" className={`w-3.5 h-3.5 transition-transform duration-200 ${entry.expanded ? "rotate-180" : ""}`}>
-                  <path fill="currentColor" d="M7 10l5 5 5-5z" />
-                </svg>
-              </button>
+              <div className="mt-5 flex items-center gap-3">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 text-[13px] font-medium bg-transparent text-accent/90 border-none p-0 cursor-pointer hover:text-accent transition-colors"
+                  onClick={onToggle}
+                >
+                  {entry.expanded ? "Hide individual responses" : "Show individual responses"}
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className={`w-3.5 h-3.5 transition-transform duration-200 ${entry.expanded ? "rotate-180" : ""}`}>
+                    <path fill="currentColor" d="M7 10l5 5 5-5z" />
+                  </svg>
+                </button>
+                {entry.expanded && Object.keys(entry.panel_responses).length > 1 && (
+                  <div className="flex gap-1 border border-border/50 rounded-md p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("list")}
+                      className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                        viewMode === "list"
+                          ? "bg-foreground/10 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="List view"
+                    >
+                      <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                        <line x1="8" y1="6" x2="21" y2="6" />
+                        <line x1="8" y1="12" x2="21" y2="12" />
+                        <line x1="8" y1="18" x2="21" y2="18" />
+                        <line x1="3" y1="6" x2="3.01" y2="6" />
+                        <line x1="3" y1="12" x2="3.01" y2="12" />
+                        <line x1="3" y1="18" x2="3.01" y2="18" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("grid")}
+                      className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                        viewMode === "grid"
+                          ? "bg-foreground/10 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="Grid view"
+                    >
+                      <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="3" y="3" width="7" height="7" />
+                        <rect x="14" y="3" width="7" height="7" />
+                        <rect x="14" y="14" width="7" height="7" />
+                        <rect x="3" y="14" width="7" height="7" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+              </div>
               <AnimatePresence>
                 {entry.expanded && (
                   <motion.div
-                    className="mt-6 border-t border-border/50 pt-6 grid gap-4"
+                    className={`mt-6 border-t border-border/50 pt-6 ${
+                      viewMode === "grid"
+                        ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                        : "flex flex-col gap-4"
+                    }`}
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
                     exit={{ opacity: 0, height: 0 }}
@@ -200,13 +248,33 @@ const MessageBubble = memo(function MessageBubble({
                     {Object.entries(entry.panel_responses).map(([name, text], idx) => (
                       <motion.article
                         key={name}
-                        className="border border-border/40 rounded-2xl p-5 bg-muted/20"
+                        className="border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response"
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.3, delay: idx * 0.05 }}
                       >
-                        <h4 className="m-0 mb-3 text-foreground text-[13px] font-semibold tracking-wide">{name}</h4>
-                        <div className="text-[13px] leading-relaxed text-muted-foreground">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-semibold text-xs">
+                              {name.charAt(0).toUpperCase()}
+                            </div>
+                            <h4 className="m-0 text-foreground text-[13px] font-semibold tracking-wide">{name}</h4>
+                          </div>
+                          {onCopy && (
+                            <button
+                              type="button"
+                              onClick={() => onCopy(text)}
+                              className="opacity-0 group-hover/response:opacity-100 p-1.5 rounded hover:bg-muted/40 transition-all"
+                              title="Copy response"
+                            >
+                              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                        <div className="text-[13px] leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
                           <Markdown content={text} />
                         </div>
                       </motion.article>
