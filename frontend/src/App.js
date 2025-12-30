@@ -495,9 +495,22 @@ export default function App() {
             }));
         }
     }, [providerKeys]);
-    const handleLoadPreset = useCallback((preset) => {
+    const handleLoadPreset = useCallback(async (preset) => {
         setPanelists(preset.panelists);
-    }, []);
+        // Auto-fetch models for providers used in the preset
+        const providersUsed = new Set(preset.panelists.map((p) => p.provider));
+        for (const provider of providersUsed) {
+            // Only fetch if we have an API key and haven't fetched models yet
+            const hasKey = providerKeys[provider]?.trim();
+            const hasModels = (providerModels[provider]?.length ?? 0) > 0;
+            if (hasKey && !hasModels) {
+                // Fetch models in the background
+                handleFetchProviderModels(provider).catch((err) => {
+                    console.error(`Failed to auto-fetch models for ${provider}:`, err);
+                });
+            }
+        }
+    }, [providerKeys, providerModels, handleFetchProviderModels]);
     // Export/Import functions
     const exportThreadAsJSON = useCallback((threadId) => {
         const threadData = {
