@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from urllib.parse import quote, urlparse, urlunparse
 
 from dotenv import load_dotenv
 
@@ -22,10 +23,40 @@ def _optional_env(name: str) -> str | None:
     return value or None
 
 
+def _encode_pg_password(conn_str: str) -> str:
+    """Encode password in PostgreSQL connection URI if needed."""
+    # If it's a keyword=value style connection string, return as-is
+    if not conn_str.startswith(("postgres://", "postgresql://")):
+        return conn_str
+
+    try:
+        parsed = urlparse(conn_str)
+        # If there's a password in the URL, re-encode it properly
+        if parsed.password:
+            # Reconstruct the netloc with properly encoded password
+            username = quote(parsed.username, safe="")
+            password = quote(parsed.password, safe="")
+
+            if parsed.port:
+                netloc = f"{username}:{password}@{parsed.hostname}:{parsed.port}"
+            else:
+                netloc = f"{username}:{password}@{parsed.hostname}"
+
+            # Reconstruct the full URL
+            encoded = parsed._replace(netloc=netloc)
+            return urlunparse(encoded)
+
+        return conn_str
+    except Exception:
+        # If parsing fails, return the original string
+        return conn_str
+
+
 @lru_cache(maxsize=None)
 def get_pg_conn_str() -> str:
-    """Return the Postgres connection string, raising if missing."""
-    return _require_env("PG_CONN_STR")
+    """Return the Postgres connection string with properly encoded password."""
+    conn_str = _require_env("PG_CONN_STR")
+    return _encode_pg_password(conn_str)
 
 
 @lru_cache(maxsize=None)

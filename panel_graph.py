@@ -395,7 +395,8 @@ def build_panel_graph():
 
         try:
             pg_url = get_pg_conn_str()
-            checkpointer = PostgresSaver.from_conn_string(pg_url)
+            # from_conn_string returns a context manager, so we need to enter it
+            checkpointer = PostgresSaver.from_conn_string(pg_url).__enter__()
         except Exception as exc:  # pragma: no cover - fallback in local envs
             logger.warning("Falling back to in-memory checkpointer: %s", exc)
             checkpointer = MemorySaver()
