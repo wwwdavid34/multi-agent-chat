@@ -415,25 +415,6 @@ export default function App() {
             cancelThreadCreation();
         }
     }
-    const handlePanelistChange = useCallback((id, updates) => {
-        setPanelists((prev) => prev.map((panelist) => {
-            if (panelist.id !== id)
-                return panelist;
-            const nextProvider = updates.provider ?? panelist.provider;
-            const providerModelsList = providerModels[nextProvider] ?? [];
-            let nextModel = updates.model ?? panelist.model;
-            if (updates.provider && updates.provider !== panelist.provider) {
-                nextModel = providerModelsList[0]?.id ?? "";
-            }
-            return {
-                ...panelist,
-                ...updates,
-                provider: nextProvider,
-                model: nextModel,
-                name: updates.name ?? panelist.name,
-            };
-        }));
-    }, [providerModels]);
     const handleAddPanelist = useCallback(() => {
         setPanelists((prev) => {
             if (prev.length >= MAX_PANELISTS)
@@ -507,6 +488,34 @@ export default function App() {
             }));
         }
     }, [providerKeys]);
+    const handlePanelistChange = useCallback((id, updates) => {
+        setPanelists((prev) => prev.map((panelist) => {
+            if (panelist.id !== id)
+                return panelist;
+            const nextProvider = updates.provider ?? panelist.provider;
+            const providerModelsList = providerModels[nextProvider] ?? [];
+            let nextModel = updates.model ?? panelist.model;
+            if (updates.provider && updates.provider !== panelist.provider) {
+                nextModel = providerModelsList[0]?.id ?? "";
+                // Auto-fetch models if provider changed and we have an API key
+                const hasKey = providerKeys[nextProvider]?.trim();
+                const hasModels = (providerModels[nextProvider]?.length ?? 0) > 0;
+                if (hasKey && !hasModels) {
+                    // Fetch models asynchronously without blocking the UI
+                    handleFetchProviderModels(nextProvider).catch((err) => {
+                        console.error(`Failed to auto-fetch models for ${nextProvider}:`, err);
+                    });
+                }
+            }
+            return {
+                ...panelist,
+                ...updates,
+                provider: nextProvider,
+                model: nextModel,
+                name: updates.name ?? panelist.name,
+            };
+        }));
+    }, [providerModels, providerKeys, handleFetchProviderModels]);
     const handleLoadPreset = useCallback(async (preset) => {
         // Set panelists from preset first
         setPanelists(preset.panelists);

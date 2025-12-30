@@ -507,7 +507,7 @@ export function PanelConfigurator({
                           <label className="text-xs tracking-wide text-muted-foreground font-medium">
                             Model
                           </label>
-                          <div className="mt-1.5 flex gap-2">
+                          <div className="mt-1.5">
                             <select
                               value={panelist.model}
                               onChange={(event) =>
@@ -516,10 +516,10 @@ export function PanelConfigurator({
                                 })
                               }
                               disabled={models.length === 0}
-                              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-60"
+                              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-60"
                             >
                               <option value="">
-                                {models.length === 0 ? "Fetch models" : "Select model"}
+                                {models.length === 0 ? "Select provider first" : "Select model"}
                               </option>
                               {models.map((model) => {
                                 const capabilities = getModelCapabilities(panelist.provider, model.id);
@@ -535,14 +535,6 @@ export function PanelConfigurator({
                                 );
                               })}
                             </select>
-                            <button
-                              type="button"
-                              onClick={() => onFetchModels(panelist.provider)}
-                              disabled={status?.loading}
-                              className="rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-50 hover:bg-muted transition-colors"
-                            >
-                              ↻
-                            </button>
                           </div>
                           {status?.error && (
                             <p className="text-xs text-destructive mt-1.5">
