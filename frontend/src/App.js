@@ -180,6 +180,37 @@ export default function App() {
         }
         loadInitialKeys();
     }, []); // Run only once on mount
+    // Keyboard shortcuts
+    useEffect(() => {
+        function handleKeyboardShortcut(e) {
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+            const modKey = isMac ? e.metaKey : e.ctrlKey;
+            // Cmd/Ctrl + N: New thread
+            if (modKey && e.key === 'n') {
+                e.preventDefault();
+                setIsCreatingThread(true);
+                setNewThreadName("");
+            }
+            // Cmd/Ctrl + /: Toggle settings
+            if (modKey && e.key === '/') {
+                e.preventDefault();
+                setConfigOpen((prev) => !prev);
+            }
+            // Esc: Close modals
+            if (e.key === 'Escape') {
+                if (configOpen) {
+                    e.preventDefault();
+                    setConfigOpen(false);
+                }
+                if (isCreatingThread) {
+                    e.preventDefault();
+                    cancelThreadCreation();
+                }
+            }
+        }
+        window.addEventListener('keydown', handleKeyboardShortcut);
+        return () => window.removeEventListener('keydown', handleKeyboardShortcut);
+    }, [configOpen, isCreatingThread]);
     const togglePanelist = useCallback((id) => {
         setEnabledPanelists((prev) => {
             const newSet = new Set(prev);
@@ -447,6 +478,9 @@ export default function App() {
             }));
         }
     }, [providerKeys]);
+    const handleLoadPreset = useCallback((preset) => {
+        setPanelists(preset.panelists);
+    }, []);
     // Export/Import functions
     const exportThreadAsJSON = useCallback((threadId) => {
         const threadData = {
@@ -561,7 +595,7 @@ export default function App() {
                                     }
                                 } })] })] })), !sidebarVisible && (_jsx("button", { type: "button", onClick: () => setSidebarVisible(true), className: "hidden lg:flex fixed left-4 top-6 z-50 w-10 h-10 items-center justify-center rounded-lg bg-card border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all shadow-lg", "aria-label": "Show sidebar", title: "Show sidebar", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-5 h-5", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M3 3h18v18H3V3z" }), _jsx("path", { d: "M10 3v18" }), _jsx("path", { d: "M14 8l3 3-3 3" })] }) })), _jsxs("main", { className: "flex-1 overflow-hidden bg-transparent flex flex-col", children: [_jsxs("div", { className: "mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-6 flex flex-col gap-5", children: [_jsx("header", { className: "flex flex-col gap-2", children: _jsxs("div", { className: "min-w-0", children: [_jsx("p", { className: "m-0 text-[11px] text-muted-foreground/70 tracking-wider uppercase font-medium", children: "Thread" }), _jsx("h1", { className: "mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate tracking-tight", children: threadId })] }) }), _jsx("div", { className: "flex flex-wrap items-center gap-2 text-xs text-muted-foreground", children: panelistSummaries.map((summary) => (_jsxs("button", { type: "button", onClick: () => togglePanelist(summary.id), className: `inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 transition-all cursor-pointer ${summary.enabled
                                         ? "border-border/40 bg-card/50 hover:bg-card hover:border-accent/40"
-                                        : "border-border/20 bg-muted/20 opacity-50 hover:opacity-70"}`, title: summary.enabled ? "Click to disable" : "Click to enable", children: [_jsx("span", { className: `font-semibold text-[12px] ${summary.enabled ? "text-foreground" : "text-muted-foreground"}`, children: summary.name }), _jsxs("span", { className: "text-muted-foreground text-[11px]", children: ["\u00B7 ", summary.provider, summary.model ? ` · ${summary.model}` : ""] }), summary.enabled && (_jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-accent", fill: "currentColor", children: _jsx("circle", { cx: "12", cy: "12", r: "4" }) }))] }, summary.id))) })] }), _jsxs("section", { className: "flex flex-1 min-h-0 flex-col relative", children: [_jsx("div", { className: "flex-1 overflow-y-auto scroll-smooth", ref: messageListRef, children: _jsxs("div", { className: "flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6", children: [messages.length === 0 && (_jsx("div", { className: "flex-1 flex items-center justify-center", children: _jsx("p", { className: "text-muted-foreground/60 text-center text-sm", children: "Start a conversation by asking a question below." }) })), messages.map((entry, index) => (_jsx(MessageBubble, { entry: entry, onToggle: () => toggleEntry(index), isLatest: index === messages.length - 1, messageRef: index === messages.length - 1 ? latestMessageRef : undefined, loadingStatus: loadingStatus, onCopy: copyToClipboard, onDelete: () => deleteMessage(index), onRegenerate: () => regenerateMessage(index) }, entry.id)))] }) }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none z-[5]" }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 pointer-events-none z-[15]", children: _jsx("div", { className: "mx-auto w-full max-w-3xl px-4 sm:px-6 relative", children: _jsx(AnimatePresence, { children: showScrollToBottom && (_jsxs(motion.button, { type: "button", className: "absolute right-0 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 pointer-events-auto", onClick: handleScrollToBottom, initial: { opacity: 0, y: 10, scale: 0.9 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 10, scale: 0.9 }, transition: { duration: 0.2 }, children: [_jsx("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "currentColor", children: _jsx("path", { d: "M12 16l-6-6h12z" }) }), "Jump to latest"] })) }) }) }), _jsx("div", { className: "pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6", children: _jsx(ChatComposer, { loading: loading, error: error, onSend: handleSend, onClearError: () => setError(null), onError: (message) => setError(message) }) })] })] }), _jsx(PanelConfigurator, { open: configOpen, onClose: () => setConfigOpen(false), panelists: panelists, onPanelistChange: handlePanelistChange, onAddPanelist: handleAddPanelist, onRemovePanelist: handleRemovePanelist, providerKeys: providerKeys, onProviderKeyChange: handleProviderKeyChange, providerModels: providerModels, modelStatus: modelStatus, onFetchModels: handleFetchProviderModels, maxPanelists: MAX_PANELISTS })] }));
+                                        : "border-border/20 bg-muted/20 opacity-50 hover:opacity-70"}`, title: summary.enabled ? "Click to disable" : "Click to enable", children: [_jsx("span", { className: `font-semibold text-[12px] ${summary.enabled ? "text-foreground" : "text-muted-foreground"}`, children: summary.name }), _jsxs("span", { className: "text-muted-foreground text-[11px]", children: ["\u00B7 ", summary.provider, summary.model ? ` · ${summary.model}` : ""] }), summary.enabled && (_jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-accent", fill: "currentColor", children: _jsx("circle", { cx: "12", cy: "12", r: "4" }) }))] }, summary.id))) })] }), _jsxs("section", { className: "flex flex-1 min-h-0 flex-col relative", children: [_jsx("div", { className: "flex-1 overflow-y-auto scroll-smooth", ref: messageListRef, children: _jsxs("div", { className: "flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6", children: [messages.length === 0 && (_jsx("div", { className: "flex-1 flex items-center justify-center", children: _jsx("p", { className: "text-muted-foreground/60 text-center text-sm", children: "Start a conversation by asking a question below." }) })), messages.map((entry, index) => (_jsx(MessageBubble, { entry: entry, onToggle: () => toggleEntry(index), isLatest: index === messages.length - 1, messageRef: index === messages.length - 1 ? latestMessageRef : undefined, loadingStatus: loadingStatus, onCopy: copyToClipboard, onDelete: () => deleteMessage(index), onRegenerate: () => regenerateMessage(index) }, entry.id)))] }) }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none z-[5]" }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 pointer-events-none z-[15]", children: _jsx("div", { className: "mx-auto w-full max-w-3xl px-4 sm:px-6 relative", children: _jsx(AnimatePresence, { children: showScrollToBottom && (_jsxs(motion.button, { type: "button", className: "absolute right-0 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 pointer-events-auto", onClick: handleScrollToBottom, initial: { opacity: 0, y: 10, scale: 0.9 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 10, scale: 0.9 }, transition: { duration: 0.2 }, children: [_jsx("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "currentColor", children: _jsx("path", { d: "M12 16l-6-6h12z" }) }), "Jump to latest"] })) }) }) }), _jsx("div", { className: "pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6", children: _jsx(ChatComposer, { loading: loading, error: error, onSend: handleSend, onClearError: () => setError(null), onError: (message) => setError(message) }) })] })] }), _jsx(PanelConfigurator, { open: configOpen, onClose: () => setConfigOpen(false), panelists: panelists, onPanelistChange: handlePanelistChange, onAddPanelist: handleAddPanelist, onRemovePanelist: handleRemovePanelist, providerKeys: providerKeys, onProviderKeyChange: handleProviderKeyChange, providerModels: providerModels, modelStatus: modelStatus, onFetchModels: handleFetchProviderModels, maxPanelists: MAX_PANELISTS, onLoadPreset: handleLoadPreset })] }));
 }
 function ChatComposer({ loading, error, onSend, onClearError, onError }) {
     const [question, setQuestion] = useState("");
@@ -628,6 +662,14 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }) {
                                 setQuestion(event.target.value);
                                 if (error)
                                     onClearError();
+                            }, onKeyDown: (event) => {
+                                const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+                                const modKey = isMac ? event.metaKey : event.ctrlKey;
+                                // Cmd/Ctrl + Enter: Submit
+                                if (modKey && event.key === 'Enter' && canSubmit) {
+                                    event.preventDefault();
+                                    handleSubmit(event);
+                                }
                             }, placeholder: "Send a message...", rows: 1, className: "w-full border-none rounded-2xl px-4 md:px-5 pt-3.5 md:pt-4 pb-14 md:pb-16 text-sm md:text-[15px] font-inherit resize-none overflow-y-hidden bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed" }), _jsx("div", { className: "absolute left-0 right-0 bottom-0 pt-3 px-4 md:px-5 pb-3.5 md:pb-4 bg-gradient-to-t from-background/95 via-background/80 to-transparent border-t border-border/20 rounded-b-2xl", children: _jsxs("div", { className: "flex items-center gap-2 md:gap-2.5", children: [_jsxs("button", { type: "button", className: "inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border/50 bg-background/90 text-foreground text-xs font-medium cursor-pointer hover:bg-muted/60 hover:border-border transition-all shadow-sm", onClick: () => fileInputRef.current?.click(), children: [_jsx("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", className: "w-3.5 h-3.5", children: _jsx("path", { fill: "currentColor", d: "M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z" }) }), _jsx("span", { className: "hidden sm:inline", children: "Attach" })] }), _jsx("input", { ref: fileInputRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: (event) => {
                                             handleFilesSelected(event.target.files);
                                             event.target.value = "";

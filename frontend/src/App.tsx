@@ -772,6 +772,10 @@ export default function App() {
     [providerKeys]
   );
 
+  const handleLoadPreset = useCallback((preset: import("./lib/presetManager").PanelistPreset) => {
+    setPanelists(preset.panelists);
+  }, []);
+
   // Export/Import functions
   const exportThreadAsJSON = useCallback((threadId: string) => {
     const threadData = {
@@ -1176,6 +1180,7 @@ export default function App() {
         modelStatus={modelStatus}
         onFetchModels={handleFetchProviderModels}
         maxPanelists={MAX_PANELISTS}
+        onLoadPreset={handleLoadPreset}
       />
     </div>
   );
