@@ -25,8 +25,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend files
-COPY pyproject.toml ./
-COPY config.py main.py panel_graph.py provider_clients.py ./
+COPY backend/pyproject.toml ./
+COPY backend/*.py ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e .

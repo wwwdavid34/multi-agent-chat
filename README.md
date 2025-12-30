@@ -6,11 +6,13 @@ LangGraph + FastAPI backend with a Vite/React frontend for running multi-agent d
 
 1. `conda activate magent`
 2. Copy `.env.example` to `.env` and set `OPENAI_API_KEY`, `PG_CONN_STR`, and optional `USE_IN_MEMORY_CHECKPOINTER=1` for local tests.
-3. Install Python deps once: `pip install -e '.[dev]'`
-4. Run the API: `uvicorn main:app --reload`
+3. `cd backend`
+4. Install Python deps once: `pip install -e '.[dev]'`
+5. Run the API: `uvicorn main:app --reload`
 
 Tests (use in-memory saver):
 ```
+cd backend
 USE_IN_MEMORY_CHECKPOINTER=1 pytest
 ```
 

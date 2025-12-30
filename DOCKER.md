@@ -168,7 +168,7 @@ For production use:
    - Use strong, random passwords for `POSTGRES_PASSWORD`
    - Store `.env.docker` securely (add to `.gitignore`)
    - Consider using Docker secrets instead of environment variables
-   - Update CORS settings in `main.py` to restrict origins
+   - Update CORS settings in `backend/main.py` to restrict origins
 
 2. **Scaling:**
    - Add nginx as a reverse proxy
