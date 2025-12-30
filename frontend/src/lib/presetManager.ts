@@ -88,7 +88,7 @@ export const DEFAULT_PRESETS: PanelistPreset[] = [
         id: "vision-3",
         name: "Gemini 2.0 Flash",
         provider: "gemini",
-        model: "gemini-2.0-flash-exp",
+        model: "gemini-2.0-flash",
       },
       {
         id: "vision-4",
