@@ -1,0 +1,64 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.eggs
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis
+.pytest_cache
+
+# Virtual environments
+venv
+env
+ENV
+.venv
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
+frontend/node_modules
+frontend/dist
+frontend/.env
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Claude
+.claude
+
+# Tests
+tests
+*.md
+SPEC.md
+BACKEND.md
+README.md
+
+# Other
+multi_agent_panel.egg-info

@@ -1,8 +1,10 @@
 """FastAPI application exposing the /ask endpoint."""
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
@@ -106,6 +108,15 @@ async def get_provider_models(provider: ProviderName, payload: ProviderKeyReques
 
     payload_models = [ProviderModel(**model) for model in models]
     return ProviderModelsResponse(models=payload_models)
+
+
+# Serve static frontend files (built by Vite)
+frontend_dist = Path(__file__).parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
+    logger.info("Serving static frontend from %s", frontend_dist)
+else:
+    logger.warning("Frontend dist directory not found at %s", frontend_dist)
 
 
 if __name__ == "__main__":
