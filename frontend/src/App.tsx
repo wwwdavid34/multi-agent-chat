@@ -1,7 +1,7 @@
 import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { askPanel, askPanelStream } from "./api";
+import { askPanel, askPanelStream, fetchInitialKeys } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
 import { ThemeToggle } from "./components/theme-toggle";
@@ -228,6 +228,23 @@ export default function App() {
   const [loadingStatus, setLoadingStatus] = useState<string>("Panel is thinking...");
   const [error, setError] = useState<string | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(() => {
+    const stored = localStorage.getItem("sidebarVisible");
+    return stored !== null ? stored === "true" : true; // Default to visible
+  });
+  const [enabledPanelists, setEnabledPanelists] = useState<Set<string>>(() => {
+    const stored = localStorage.getItem("enabledPanelists");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        return new Set(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        return new Set();
+      }
+    }
+    // Default: all panelists enabled
+    return new Set(panelists.map((p) => p.id));
+  });
   const newThreadInputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
@@ -272,6 +289,34 @@ export default function App() {
   }, [providerModels]);
 
   useEffect(() => {
+    localStorage.setItem("sidebarVisible", String(sidebarVisible));
+  }, [sidebarVisible]);
+
+  useEffect(() => {
+    localStorage.setItem("enabledPanelists", JSON.stringify(Array.from(enabledPanelists)));
+  }, [enabledPanelists]);
+
+  // Sync enabled panelists when panelists change (enable new ones by default)
+  useEffect(() => {
+    setEnabledPanelists((prev) => {
+      const newEnabled = new Set(prev);
+      panelists.forEach((p) => {
+        if (!newEnabled.has(p.id)) {
+          newEnabled.add(p.id);
+        }
+      });
+      // Remove IDs that no longer exist
+      const currentIds = new Set(panelists.map((p) => p.id));
+      Array.from(newEnabled).forEach((id) => {
+        if (!currentIds.has(id)) {
+          newEnabled.delete(id);
+        }
+      });
+      return newEnabled;
+    });
+  }, [panelists]);
+
+  useEffect(() => {
     if (!threads.includes(threadId)) {
       setThreads((prev) => Array.from(new Set([...prev, threadId])));
     }
@@ -287,24 +332,68 @@ export default function App() {
     }
   }, [isCreatingThread]);
 
+  // Fetch initial API keys from environment variables on mount
+  useEffect(() => {
+    async function loadInitialKeys() {
+      const initialKeys = await fetchInitialKeys();
+
+      // Only populate keys that aren't already set in localStorage
+      const storedKeys = parseJSON<ProviderKeyMap>(localStorage.getItem("providerKeys"), {});
+      const mergedKeys = { ...storedKeys };
+
+      for (const [provider, key] of Object.entries(initialKeys)) {
+        // Only use environment key if no stored key exists
+        if (key && !storedKeys[provider as LLMProvider]?.trim()) {
+          mergedKeys[provider as LLMProvider] = key;
+        }
+      }
+
+      // Update state if we have new keys
+      if (JSON.stringify(mergedKeys) !== JSON.stringify(storedKeys)) {
+        setProviderKeys(mergedKeys);
+      }
+    }
+
+    loadInitialKeys();
+  }, []); // Run only once on mount
+
+  const togglePanelist = useCallback((id: string) => {
+    setEnabledPanelists((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        // Don't allow disabling the last panelist
+        if (newSet.size <= 1) {
+          return prev;
+        }
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  }, []);
+
   const preparedPanelists = useMemo(
     () =>
-      panelists.map((panelist, index) => ({
-        ...panelist,
-        name: panelist.name.trim() || `Panelist ${index + 1}`,
-      })),
-    [panelists]
+      panelists
+        .filter((panelist) => enabledPanelists.has(panelist.id))
+        .map((panelist, index) => ({
+          ...panelist,
+          name: panelist.name.trim() || `Panelist ${index + 1}`,
+        })),
+    [panelists, enabledPanelists]
   );
 
   const panelistSummaries = useMemo(
     () =>
-      preparedPanelists.map((panelist) => ({
+      panelists.map((panelist, index) => ({
         id: panelist.id,
-        name: panelist.name,
+        name: panelist.name.trim() || `Panelist ${index + 1}`,
         provider: PROVIDER_LABELS[panelist.provider],
         model: panelist.model,
+        enabled: enabledPanelists.has(panelist.id),
       })),
-    [preparedPanelists]
+    [panelists, enabledPanelists]
   );
 
   const sanitizedProviderKeys = useMemo(() => {
@@ -585,20 +674,36 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
-      <aside className="hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 overflow-y-auto border-r border-border/60">
+      {sidebarVisible && (
+        <aside className="hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 border-r border-border/60 relative">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold m-0 text-foreground tracking-tight">Conversations</h2>
-          <button
-            type="button"
-            className="w-8 h-8 rounded-lg border border-border/60 bg-muted/30 text-foreground text-lg font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/50 transition-all"
-            onClick={() => {
-              setIsCreatingThread(true);
-              setNewThreadName("");
-            }}
-            aria-label="Create new thread"
-          >
-            +
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="w-8 h-8 rounded-lg border border-border/60 bg-muted/30 text-foreground text-lg font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/50 transition-all"
+              onClick={() => {
+                setIsCreatingThread(true);
+                setNewThreadName("");
+              }}
+              aria-label="Create new thread"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={() => setSidebarVisible(false)}
+              className="w-8 h-8 rounded-lg border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all flex items-center justify-center"
+              aria-label="Hide sidebar"
+              title="Hide sidebar"
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 3H3v18h18V3z" />
+                <path d="M10 3v18" />
+                <path d="M4 14l3-3-3-3" />
+              </svg>
+            </button>
+          </div>
         </div>
         <ul className="list-none p-0 m-0 flex flex-col gap-1.5 overflow-y-auto flex-1">
           {threads.map((id) => (
@@ -665,40 +770,78 @@ export default function App() {
             />
           </form>
         )}
+
+        {/* Settings and Theme toggle at bottom */}
+        <div className="flex items-center gap-2 pt-4 border-t border-border/40 mt-auto">
+          <button
+            type="button"
+            onClick={() => setConfigOpen(true)}
+            className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 1v6m0 6v6m5.2-13l-1 1.7M7.8 19.3l-1-1.7m0-11.6l1 1.7m4.2 9.3l1 1.7M1 12h6m6 0h6" />
+            </svg>
+            Settings
+          </button>
+          <ThemeToggle />
+        </div>
       </aside>
+      )}
+
+      {/* Floating button to show sidebar when hidden */}
+      {!sidebarVisible && (
+        <button
+          type="button"
+          onClick={() => setSidebarVisible(true)}
+          className="hidden lg:flex fixed left-4 top-6 z-50 w-10 h-10 items-center justify-center rounded-lg bg-card border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all shadow-lg"
+          aria-label="Show sidebar"
+          title="Show sidebar"
+        >
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 3h18v18H3V3z" />
+            <path d="M10 3v18" />
+            <path d="M14 8l3 3-3 3" />
+          </svg>
+        </button>
+      )}
 
       <main className="flex-1 overflow-hidden bg-transparent flex flex-col">
         {/* Header and panelist info - constrained */}
         <div className="mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-6 flex flex-col gap-5">
-          <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <header className="flex flex-col gap-2">
             <div className="min-w-0">
               <p className="m-0 text-[11px] text-muted-foreground/70 tracking-wider uppercase font-medium">Thread</p>
               <h1 className="mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate tracking-tight">{threadId}</h1>
-            </div>
-            <div className="flex items-center gap-2.5 text-sm">
-              <button
-                type="button"
-                onClick={() => setConfigOpen(true)}
-                className="rounded-lg border border-border/60 px-4 py-2 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all"
-              >
-                Settings
-              </button>
-              <ThemeToggle />
             </div>
           </header>
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {panelistSummaries.map((summary) => (
-              <span
+              <button
                 key={summary.id}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border/40 bg-card/50 px-3 py-1.5"
+                type="button"
+                onClick={() => togglePanelist(summary.id)}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 transition-all cursor-pointer ${
+                  summary.enabled
+                    ? "border-border/40 bg-card/50 hover:bg-card hover:border-accent/40"
+                    : "border-border/20 bg-muted/20 opacity-50 hover:opacity-70"
+                }`}
+                title={summary.enabled ? "Click to disable" : "Click to enable"}
               >
-                <span className="font-semibold text-foreground text-[12px]">{summary.name}</span>
+                <span className={`font-semibold text-[12px] ${summary.enabled ? "text-foreground" : "text-muted-foreground"}`}>
+                  {summary.name}
+                </span>
                 <span className="text-muted-foreground text-[11px]">
                   · {summary.provider}
                   {summary.model ? ` · ${summary.model}` : ""}
                 </span>
-              </span>
+                {summary.enabled && (
+                  <svg viewBox="0 0 24 24" className="w-3 h-3 text-accent" fill="currentColor">
+                    <circle cx="12" cy="12" r="4" />
+                  </svg>
+                )}
+              </button>
             ))}
           </div>
         </div>

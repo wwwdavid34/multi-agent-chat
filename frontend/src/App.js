@@ -1,7 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { askPanelStream } from "./api";
+import { askPanelStream, fetchInitialKeys } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
 import { ThemeToggle } from "./components/theme-toggle";
@@ -69,6 +69,24 @@ export default function App() {
     const [loadingStatus, setLoadingStatus] = useState("Panel is thinking...");
     const [error, setError] = useState(null);
     const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+    const [sidebarVisible, setSidebarVisible] = useState(() => {
+        const stored = localStorage.getItem("sidebarVisible");
+        return stored !== null ? stored === "true" : true; // Default to visible
+    });
+    const [enabledPanelists, setEnabledPanelists] = useState(() => {
+        const stored = localStorage.getItem("enabledPanelists");
+        if (stored) {
+            try {
+                const parsed = JSON.parse(stored);
+                return new Set(Array.isArray(parsed) ? parsed : []);
+            }
+            catch {
+                return new Set();
+            }
+        }
+        // Default: all panelists enabled
+        return new Set(panelists.map((p) => p.id));
+    });
     const newThreadInputRef = useRef(null);
     const messageListRef = useRef(null);
     const latestMessageRef = useRef(null);
@@ -104,6 +122,31 @@ export default function App() {
         localStorage.setItem("providerModels", JSON.stringify(providerModels));
     }, [providerModels]);
     useEffect(() => {
+        localStorage.setItem("sidebarVisible", String(sidebarVisible));
+    }, [sidebarVisible]);
+    useEffect(() => {
+        localStorage.setItem("enabledPanelists", JSON.stringify(Array.from(enabledPanelists)));
+    }, [enabledPanelists]);
+    // Sync enabled panelists when panelists change (enable new ones by default)
+    useEffect(() => {
+        setEnabledPanelists((prev) => {
+            const newEnabled = new Set(prev);
+            panelists.forEach((p) => {
+                if (!newEnabled.has(p.id)) {
+                    newEnabled.add(p.id);
+                }
+            });
+            // Remove IDs that no longer exist
+            const currentIds = new Set(panelists.map((p) => p.id));
+            Array.from(newEnabled).forEach((id) => {
+                if (!currentIds.has(id)) {
+                    newEnabled.delete(id);
+                }
+            });
+            return newEnabled;
+        });
+    }, [panelists]);
+    useEffect(() => {
         if (!threads.includes(threadId)) {
             setThreads((prev) => Array.from(new Set([...prev, threadId])));
         }
@@ -117,16 +160,55 @@ export default function App() {
             return () => cancelAnimationFrame(frame);
         }
     }, [isCreatingThread]);
-    const preparedPanelists = useMemo(() => panelists.map((panelist, index) => ({
+    // Fetch initial API keys from environment variables on mount
+    useEffect(() => {
+        async function loadInitialKeys() {
+            const initialKeys = await fetchInitialKeys();
+            // Only populate keys that aren't already set in localStorage
+            const storedKeys = parseJSON(localStorage.getItem("providerKeys"), {});
+            const mergedKeys = { ...storedKeys };
+            for (const [provider, key] of Object.entries(initialKeys)) {
+                // Only use environment key if no stored key exists
+                if (key && !storedKeys[provider]?.trim()) {
+                    mergedKeys[provider] = key;
+                }
+            }
+            // Update state if we have new keys
+            if (JSON.stringify(mergedKeys) !== JSON.stringify(storedKeys)) {
+                setProviderKeys(mergedKeys);
+            }
+        }
+        loadInitialKeys();
+    }, []); // Run only once on mount
+    const togglePanelist = useCallback((id) => {
+        setEnabledPanelists((prev) => {
+            const newSet = new Set(prev);
+            if (newSet.has(id)) {
+                // Don't allow disabling the last panelist
+                if (newSet.size <= 1) {
+                    return prev;
+                }
+                newSet.delete(id);
+            }
+            else {
+                newSet.add(id);
+            }
+            return newSet;
+        });
+    }, []);
+    const preparedPanelists = useMemo(() => panelists
+        .filter((panelist) => enabledPanelists.has(panelist.id))
+        .map((panelist, index) => ({
         ...panelist,
         name: panelist.name.trim() || `Panelist ${index + 1}`,
-    })), [panelists]);
-    const panelistSummaries = useMemo(() => preparedPanelists.map((panelist) => ({
+    })), [panelists, enabledPanelists]);
+    const panelistSummaries = useMemo(() => panelists.map((panelist, index) => ({
         id: panelist.id,
-        name: panelist.name,
+        name: panelist.name.trim() || `Panelist ${index + 1}`,
         provider: PROVIDER_LABELS[panelist.provider],
         model: panelist.model,
-    })), [preparedPanelists]);
+        enabled: enabledPanelists.has(panelist.id),
+    })), [panelists, enabledPanelists]);
     const sanitizedProviderKeys = useMemo(() => {
         const entries = Object.entries(providerKeys).filter(([, value]) => Boolean(value?.trim()));
         return Object.fromEntries(entries.map(([key, value]) => [key, value.trim()]));
@@ -365,16 +447,18 @@ export default function App() {
             }));
         }
     }, [providerKeys]);
-    return (_jsxs("div", { className: "flex h-screen w-full overflow-hidden bg-background", children: [_jsxs("aside", { className: "hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 overflow-y-auto border-r border-border/60", children: [_jsxs("div", { className: "flex items-center justify-between gap-3", children: [_jsx("h2", { className: "text-lg font-semibold m-0 text-foreground tracking-tight", children: "Conversations" }), _jsx("button", { type: "button", className: "w-8 h-8 rounded-lg border border-border/60 bg-muted/30 text-foreground text-lg font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/50 transition-all", onClick: () => {
-                                    setIsCreatingThread(true);
-                                    setNewThreadName("");
-                                }, "aria-label": "Create new thread", children: "+" })] }), _jsx("ul", { className: "list-none p-0 m-0 flex flex-col gap-1.5 overflow-y-auto flex-1", children: threads.map((id) => (_jsx("li", { className: "group", children: _jsxs("div", { className: "flex items-center gap-1.5 relative", children: [_jsx("button", { type: "button", className: `flex-1 flex items-center justify-between px-3.5 py-2 rounded-lg border text-[13px] transition-all ${threadId === id
+    return (_jsxs("div", { className: "flex h-screen w-full overflow-hidden bg-background", children: [sidebarVisible && (_jsxs("aside", { className: "hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 border-r border-border/60 relative", children: [_jsxs("div", { className: "flex items-center justify-between gap-3", children: [_jsx("h2", { className: "text-lg font-semibold m-0 text-foreground tracking-tight", children: "Conversations" }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsx("button", { type: "button", className: "w-8 h-8 rounded-lg border border-border/60 bg-muted/30 text-foreground text-lg font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/50 transition-all", onClick: () => {
+                                            setIsCreatingThread(true);
+                                            setNewThreadName("");
+                                        }, "aria-label": "Create new thread", children: "+" }), _jsx("button", { type: "button", onClick: () => setSidebarVisible(false), className: "w-8 h-8 rounded-lg border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all flex items-center justify-center", "aria-label": "Hide sidebar", title: "Hide sidebar", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M21 3H3v18h18V3z" }), _jsx("path", { d: "M10 3v18" }), _jsx("path", { d: "M4 14l3-3-3-3" })] }) })] })] }), _jsx("ul", { className: "list-none p-0 m-0 flex flex-col gap-1.5 overflow-y-auto flex-1", children: threads.map((id) => (_jsx("li", { className: "group", children: _jsxs("div", { className: "flex items-center gap-1.5 relative", children: [_jsx("button", { type: "button", className: `flex-1 flex items-center justify-between px-3.5 py-2 rounded-lg border text-[13px] transition-all ${threadId === id
                                             ? "border-accent/60 bg-accent/8 text-accent font-medium"
                                             : "border-border/40 bg-transparent font-normal text-foreground hover:bg-muted/30 hover:border-border"}`, onClick: () => handleThreadSelect(id), children: _jsx("span", { className: "truncate", children: id }) }), _jsxs("div", { className: "flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200", children: [_jsx("button", { type: "button", onClick: () => handleRenameThread(id), "aria-label": "Rename thread", className: "border-none bg-muted/40 hover:bg-muted cursor-pointer p-1.5 rounded-md transition-colors", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5 text-foreground/70", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" }), _jsx("path", { d: "M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" })] }) }), _jsx("button", { type: "button", onClick: () => handleDeleteThread(id), "aria-label": "Delete thread", className: "border-none bg-muted/40 hover:bg-destructive/10 cursor-pointer p-1.5 rounded-md transition-colors group/delete", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5 text-foreground/70 group-hover/delete:text-destructive transition-colors", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M3 6h18" }), _jsx("path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }), _jsx("path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }), _jsx("line", { x1: "10", y1: "11", x2: "10", y2: "17" }), _jsx("line", { x1: "14", y1: "11", x2: "14", y2: "17" })] }) })] })] }) }, id))) }), isCreatingThread && (_jsx("form", { className: "flex gap-2", onSubmit: handleCreateThread, children: _jsx("input", { ref: newThreadInputRef, value: newThreadName, onChange: (e) => setNewThreadName(e.target.value), onBlur: () => {
                                 if (!newThreadName.trim()) {
                                     cancelThreadCreation();
                                 }
-                            }, onKeyDown: handleThreadInputKeyDown, placeholder: "Name your thread", className: "flex-1 rounded-lg border border-border/60 px-3 py-2 text-sm font-inherit bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60 transition-all" }) }))] }), _jsxs("main", { className: "flex-1 overflow-hidden bg-transparent flex flex-col", children: [_jsxs("div", { className: "mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-6 flex flex-col gap-5", children: [_jsxs("header", { className: "flex flex-col md:flex-row md:items-center justify-between gap-4", children: [_jsxs("div", { className: "min-w-0", children: [_jsx("p", { className: "m-0 text-[11px] text-muted-foreground/70 tracking-wider uppercase font-medium", children: "Thread" }), _jsx("h1", { className: "mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate tracking-tight", children: threadId })] }), _jsxs("div", { className: "flex items-center gap-2.5 text-sm", children: [_jsx("button", { type: "button", onClick: () => setConfigOpen(true), className: "rounded-lg border border-border/60 px-4 py-2 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all", children: "Settings" }), _jsx(ThemeToggle, {})] })] }), _jsx("div", { className: "flex flex-wrap items-center gap-2 text-xs text-muted-foreground", children: panelistSummaries.map((summary) => (_jsxs("span", { className: "inline-flex items-center gap-1.5 rounded-lg border border-border/40 bg-card/50 px-3 py-1.5", children: [_jsx("span", { className: "font-semibold text-foreground text-[12px]", children: summary.name }), _jsxs("span", { className: "text-muted-foreground text-[11px]", children: ["\u00B7 ", summary.provider, summary.model ? ` · ${summary.model}` : ""] })] }, summary.id))) })] }), _jsxs("section", { className: "flex flex-1 min-h-0 flex-col relative", children: [_jsx("div", { className: "flex-1 overflow-y-auto scroll-smooth", ref: messageListRef, children: _jsxs("div", { className: "flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6", children: [messages.length === 0 && (_jsx("div", { className: "flex-1 flex items-center justify-center", children: _jsx("p", { className: "text-muted-foreground/60 text-center text-sm", children: "Start a conversation by asking a question below." }) })), messages.map((entry, index) => (_jsx(MessageBubble, { entry: entry, onToggle: () => toggleEntry(index), isLatest: index === messages.length - 1, messageRef: index === messages.length - 1 ? latestMessageRef : undefined, loadingStatus: loadingStatus }, entry.id)))] }) }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none z-[5]" }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 pointer-events-none z-[15]", children: _jsx("div", { className: "mx-auto w-full max-w-3xl px-4 sm:px-6 relative", children: _jsx(AnimatePresence, { children: showScrollToBottom && (_jsxs(motion.button, { type: "button", className: "absolute right-0 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 pointer-events-auto", onClick: handleScrollToBottom, initial: { opacity: 0, y: 10, scale: 0.9 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 10, scale: 0.9 }, transition: { duration: 0.2 }, children: [_jsx("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "currentColor", children: _jsx("path", { d: "M12 16l-6-6h12z" }) }), "Jump to latest"] })) }) }) }), _jsx("div", { className: "pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6", children: _jsx(ChatComposer, { loading: loading, error: error, onSend: handleSend, onClearError: () => setError(null), onError: (message) => setError(message) }) })] })] }), _jsx(PanelConfigurator, { open: configOpen, onClose: () => setConfigOpen(false), panelists: panelists, onPanelistChange: handlePanelistChange, onAddPanelist: handleAddPanelist, onRemovePanelist: handleRemovePanelist, providerKeys: providerKeys, onProviderKeyChange: handleProviderKeyChange, providerModels: providerModels, modelStatus: modelStatus, onFetchModels: handleFetchProviderModels, maxPanelists: MAX_PANELISTS })] }));
+                            }, onKeyDown: handleThreadInputKeyDown, placeholder: "Name your thread", className: "flex-1 rounded-lg border border-border/60 px-3 py-2 text-sm font-inherit bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60 transition-all" }) })), _jsxs("div", { className: "flex items-center gap-2 pt-4 border-t border-border/40 mt-auto", children: [_jsxs("button", { type: "button", onClick: () => setConfigOpen(true), className: "flex-1 flex items-center justify-center gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all", children: [_jsxs("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("circle", { cx: "12", cy: "12", r: "3" }), _jsx("path", { d: "M12 1v6m0 6v6m5.2-13l-1 1.7M7.8 19.3l-1-1.7m0-11.6l1 1.7m4.2 9.3l1 1.7M1 12h6m6 0h6" })] }), "Settings"] }), _jsx(ThemeToggle, {})] })] })), !sidebarVisible && (_jsx("button", { type: "button", onClick: () => setSidebarVisible(true), className: "hidden lg:flex fixed left-4 top-6 z-50 w-10 h-10 items-center justify-center rounded-lg bg-card border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all shadow-lg", "aria-label": "Show sidebar", title: "Show sidebar", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-5 h-5", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M3 3h18v18H3V3z" }), _jsx("path", { d: "M10 3v18" }), _jsx("path", { d: "M14 8l3 3-3 3" })] }) })), _jsxs("main", { className: "flex-1 overflow-hidden bg-transparent flex flex-col", children: [_jsxs("div", { className: "mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-6 flex flex-col gap-5", children: [_jsx("header", { className: "flex flex-col gap-2", children: _jsxs("div", { className: "min-w-0", children: [_jsx("p", { className: "m-0 text-[11px] text-muted-foreground/70 tracking-wider uppercase font-medium", children: "Thread" }), _jsx("h1", { className: "mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate tracking-tight", children: threadId })] }) }), _jsx("div", { className: "flex flex-wrap items-center gap-2 text-xs text-muted-foreground", children: panelistSummaries.map((summary) => (_jsxs("button", { type: "button", onClick: () => togglePanelist(summary.id), className: `inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 transition-all cursor-pointer ${summary.enabled
+                                        ? "border-border/40 bg-card/50 hover:bg-card hover:border-accent/40"
+                                        : "border-border/20 bg-muted/20 opacity-50 hover:opacity-70"}`, title: summary.enabled ? "Click to disable" : "Click to enable", children: [_jsx("span", { className: `font-semibold text-[12px] ${summary.enabled ? "text-foreground" : "text-muted-foreground"}`, children: summary.name }), _jsxs("span", { className: "text-muted-foreground text-[11px]", children: ["\u00B7 ", summary.provider, summary.model ? ` · ${summary.model}` : ""] }), summary.enabled && (_jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-accent", fill: "currentColor", children: _jsx("circle", { cx: "12", cy: "12", r: "4" }) }))] }, summary.id))) })] }), _jsxs("section", { className: "flex flex-1 min-h-0 flex-col relative", children: [_jsx("div", { className: "flex-1 overflow-y-auto scroll-smooth", ref: messageListRef, children: _jsxs("div", { className: "flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6", children: [messages.length === 0 && (_jsx("div", { className: "flex-1 flex items-center justify-center", children: _jsx("p", { className: "text-muted-foreground/60 text-center text-sm", children: "Start a conversation by asking a question below." }) })), messages.map((entry, index) => (_jsx(MessageBubble, { entry: entry, onToggle: () => toggleEntry(index), isLatest: index === messages.length - 1, messageRef: index === messages.length - 1 ? latestMessageRef : undefined, loadingStatus: loadingStatus }, entry.id)))] }) }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none z-[5]" }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 pointer-events-none z-[15]", children: _jsx("div", { className: "mx-auto w-full max-w-3xl px-4 sm:px-6 relative", children: _jsx(AnimatePresence, { children: showScrollToBottom && (_jsxs(motion.button, { type: "button", className: "absolute right-0 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 pointer-events-auto", onClick: handleScrollToBottom, initial: { opacity: 0, y: 10, scale: 0.9 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 10, scale: 0.9 }, transition: { duration: 0.2 }, children: [_jsx("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "currentColor", children: _jsx("path", { d: "M12 16l-6-6h12z" }) }), "Jump to latest"] })) }) }) }), _jsx("div", { className: "pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6", children: _jsx(ChatComposer, { loading: loading, error: error, onSend: handleSend, onClearError: () => setError(null), onError: (message) => setError(message) }) })] })] }), _jsx(PanelConfigurator, { open: configOpen, onClose: () => setConfigOpen(false), panelists: panelists, onPanelistChange: handlePanelistChange, onAddPanelist: handleAddPanelist, onRemovePanelist: handleRemovePanelist, providerKeys: providerKeys, onProviderKeyChange: handleProviderKeyChange, providerModels: providerModels, modelStatus: modelStatus, onFetchModels: handleFetchProviderModels, maxPanelists: MAX_PANELISTS })] }));
 }
 function ChatComposer({ loading, error, onSend, onClearError, onError }) {
     const [question, setQuestion] = useState("");
