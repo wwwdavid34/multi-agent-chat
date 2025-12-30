@@ -513,18 +513,17 @@ export default function App() {
         // Auto-fetch models for providers used in the preset
         const providersUsed = new Set(preset.panelists.map((p) => p.provider));
         for (const provider of providersUsed) {
-            // Only fetch if we have an API key and haven't fetched models yet
+            // Fetch models if we have an API key
             const hasKey = providerKeys[provider]?.trim();
-            const hasModels = (providerModels[provider]?.length ?? 0) > 0;
-            if (hasKey && !hasModels) {
-                // Fetch models - when completed, handleFetchProviderModels will
-                // validate the preset's models and keep them if they exist
+            if (hasKey) {
+                // Always fetch models when loading preset to ensure proper matching
+                // This triggers the smart model matching in handleFetchProviderModels
                 handleFetchProviderModels(provider).catch((err) => {
                     console.error(`Failed to auto-fetch models for ${provider}:`, err);
                 });
             }
         }
-    }, [providerKeys, providerModels, handleFetchProviderModels]);
+    }, [providerKeys, handleFetchProviderModels]);
     // Export/Import functions
     const exportThreadAsJSON = useCallback((threadId) => {
         const threadData = {
