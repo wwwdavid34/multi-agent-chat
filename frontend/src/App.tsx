@@ -28,6 +28,7 @@ interface MessageEntry {
   attachments: string[];
   summary: string;
   panel_responses: PanelResponses;
+  panelists: PanelistConfigPayload[]; // Store panelist configs to show model info
   expanded: boolean;
 }
 
@@ -246,7 +247,10 @@ const MessageBubble = memo(function MessageBubble({
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                   >
-                    {Object.entries(entry.panel_responses).map(([name, text], idx) => (
+                    {Object.entries(entry.panel_responses).map(([name, text], idx) => {
+                      // Find the panelist config to show model info
+                      const panelist = entry.panelists.find((p) => p.name === name);
+                      return (
                       <motion.article
                         key={name}
                         className="border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response"
@@ -259,7 +263,14 @@ const MessageBubble = memo(function MessageBubble({
                             <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-semibold text-xs">
                               {name.charAt(0).toUpperCase()}
                             </div>
-                            <h4 className="m-0 text-foreground text-[13px] font-semibold tracking-wide">{name}</h4>
+                            <div className="flex flex-col">
+                              <h4 className="m-0 text-foreground text-[13px] font-semibold tracking-wide">{name}</h4>
+                              {panelist && (
+                                <span className="text-[10px] text-muted-foreground mt-0.5">
+                                  {PROVIDER_LABELS[panelist.provider]} · {panelist.model}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {onCopy && (
                             <button
@@ -279,7 +290,8 @@ const MessageBubble = memo(function MessageBubble({
                           <Markdown content={text} />
                         </div>
                       </motion.article>
-                    ))}
+                      );
+                    })}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -335,6 +347,7 @@ export default function App() {
         ...entry,
         attachments: entry.attachments ?? [],
         panel_responses: entry.panel_responses ?? {},
+        panelists: entry.panelists ?? [], // Fallback for old messages without panelists
         expanded: Boolean(entry.expanded),
       }));
     });
@@ -601,6 +614,7 @@ export default function App() {
         attachments,
         summary: "", // Will be filled when response arrives
         panel_responses: {},
+        panelists: panelists, // Store panelist configs to show model info later
         expanded: false,
       };
 
