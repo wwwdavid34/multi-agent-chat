@@ -56,25 +56,48 @@ const MessageBubble = memo(function MessageBubble({
   onToggle,
   isLatest = false,
   messageRef,
-  loadingStatus = "Panel is thinking..."
+  loadingStatus = "Panel is thinking...",
+  onCopy,
+  onDelete,
+  onRegenerate,
 }: {
   entry: MessageEntry;
   onToggle: () => void;
   isLatest?: boolean;
   messageRef?: React.RefObject<HTMLDivElement>;
   loadingStatus?: string;
+  onCopy?: (text: string) => void;
+  onDelete?: () => void;
+  onRegenerate?: () => void;
 }) {
   return (
     <motion.article
       ref={messageRef}
-      className="flex flex-col gap-6 min-w-0"
+      className="flex flex-col gap-6 min-w-0 group/message"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
     >
       {/* User message */}
       <div className="flex flex-col items-end self-end text-right gap-2 w-full max-w-[85%] sm:max-w-[75%] md:max-w-[65%]">
-        <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">You</span>
+        <div className="flex items-center gap-2 w-full justify-end">
+          <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">You</span>
+          <div className="flex gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity">
+            {onCopy && (
+              <button
+                type="button"
+                onClick={() => onCopy(entry.question)}
+                className="p-1 rounded hover:bg-muted/40 transition-colors"
+                title="Copy question"
+              >
+                <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
         <motion.div
           className="w-full bg-foreground text-background rounded-2xl px-5 py-4 shadow-sm break-words"
           initial={{ opacity: 0, x: 20 }}
@@ -102,7 +125,48 @@ const MessageBubble = memo(function MessageBubble({
 
       {/* Assistant response */}
       <div className="flex flex-col items-start self-start text-left gap-2 w-full">
-        <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">Panel</span>
+        <div className="flex items-center gap-2 w-full">
+          <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1">Panel</span>
+          <div className="flex gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity">
+            {onCopy && entry.summary && (
+              <button
+                type="button"
+                onClick={() => onCopy(entry.summary)}
+                className="p-1 rounded hover:bg-muted/40 transition-colors"
+                title="Copy response"
+              >
+                <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+            )}
+            {onRegenerate && (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                className="p-1 rounded hover:bg-muted/40 transition-colors"
+                title="Regenerate response"
+              >
+                <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
+                </svg>
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="p-1 rounded hover:bg-destructive/20 transition-colors"
+                title="Delete message"
+              >
+                <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground hover:text-destructive" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
         <motion.div
           className="w-full break-words"
           initial={{ opacity: 0, x: -20 }}
@@ -672,6 +736,118 @@ export default function App() {
     [providerKeys]
   );
 
+  // Export/Import functions
+  const exportThreadAsJSON = useCallback((threadId: string) => {
+    const threadData = {
+      threadId,
+      messages: conversations[threadId] || [],
+      exportedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(threadData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${threadId}-${new Date().toISOString().split("T")[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [conversations]);
+
+  const exportThreadAsMarkdown = useCallback((threadId: string) => {
+    const messages = conversations[threadId] || [];
+    let markdown = `# ${threadId}\n\n`;
+    markdown += `*Exported: ${new Date().toLocaleString()}*\n\n---\n\n`;
+
+    messages.forEach((entry, index) => {
+      markdown += `## Exchange ${index + 1}\n\n`;
+      markdown += `**You:**\n${entry.question}\n\n`;
+
+      if (entry.attachments.length > 0) {
+        markdown += `*Attachments: ${entry.attachments.length} image(s)*\n\n`;
+      }
+
+      markdown += `**Panel Summary:**\n${entry.summary}\n\n`;
+
+      if (Object.keys(entry.panel_responses).length > 0) {
+        markdown += `### Individual Responses\n\n`;
+        Object.entries(entry.panel_responses).forEach(([name, response]) => {
+          markdown += `**${name}:**\n${response}\n\n`;
+        });
+      }
+
+      markdown += `---\n\n`;
+    });
+
+    const blob = new Blob([markdown], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${threadId}-${new Date().toISOString().split("T")[0]}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [conversations]);
+
+  const importThread = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (!data.threadId || !Array.isArray(data.messages)) {
+          throw new Error("Invalid file format");
+        }
+
+        const newThreadId = data.threadId;
+        let finalThreadId = newThreadId;
+        let counter = 1;
+
+        // Avoid overwriting existing threads
+        while (threads.includes(finalThreadId)) {
+          finalThreadId = `${newThreadId} (${counter})`;
+          counter++;
+        }
+
+        setThreads((prev) => [...prev, finalThreadId]);
+        setConversations((prev) => ({
+          ...prev,
+          [finalThreadId]: data.messages,
+        }));
+        setThreadId(finalThreadId);
+      } catch (err) {
+        setError("Failed to import conversation. Invalid file format.");
+      }
+    };
+    reader.readAsText(file);
+  }, [threads]);
+
+  // Message management functions
+  const copyToClipboard = useCallback((text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      // Could add a toast notification here
+    }).catch((err) => {
+      console.error("Failed to copy:", err);
+    });
+  }, []);
+
+  const deleteMessage = useCallback((index: number) => {
+    setConversations((prev) => ({
+      ...prev,
+      [threadId]: prev[threadId]?.filter((_, i) => i !== index) ?? [],
+    }));
+  }, [threadId]);
+
+  const regenerateMessage = useCallback(async (index: number) => {
+    const entry = conversations[threadId]?.[index];
+    if (!entry) return;
+
+    // Remove the old entry and create a new one
+    setConversations((prev) => ({
+      ...prev,
+      [threadId]: prev[threadId]?.filter((_, i) => i !== index) ?? [],
+    }));
+
+    // Re-send the question
+    await handleSend({ question: entry.question, attachments: entry.attachments });
+  }, [threadId, conversations, handleSend]);
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
       {sidebarVisible && (
@@ -725,6 +901,19 @@ export default function App() {
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   <button
                     type="button"
+                    onClick={() => exportThreadAsMarkdown(id)}
+                    aria-label="Export as Markdown"
+                    title="Export as Markdown"
+                    className="border-none bg-muted/40 hover:bg-muted cursor-pointer p-1.5 rounded-md transition-colors"
+                  >
+                    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-foreground/70" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleRenameThread(id)}
                     aria-label="Rename thread"
                     className="border-none bg-muted/40 hover:bg-muted cursor-pointer p-1.5 rounded-md transition-colors"
@@ -772,19 +961,46 @@ export default function App() {
         )}
 
         {/* Settings and Theme toggle at bottom */}
-        <div className="flex items-center gap-2 pt-4 border-t border-border/40 mt-auto">
+        <div className="flex flex-col gap-2 pt-4 border-t border-border/40 mt-auto">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setConfigOpen(true)}
+              className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all"
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M12 1v6m0 6v6m5.2-13l-1 1.7M7.8 19.3l-1-1.7m0-11.6l1 1.7m4.2 9.3l1 1.7M1 12h6m6 0h6" />
+              </svg>
+              Settings
+            </button>
+            <ThemeToggle />
+          </div>
           <button
             type="button"
-            onClick={() => setConfigOpen(true)}
-            className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all"
+            onClick={() => document.getElementById("import-file-input")?.click()}
+            className="flex items-center justify-center gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all"
           >
             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 1v6m0 6v6m5.2-13l-1 1.7M7.8 19.3l-1-1.7m0-11.6l1 1.7m4.2 9.3l1 1.7M1 12h6m6 0h6" />
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            Settings
+            Import Thread
           </button>
-          <ThemeToggle />
+          <input
+            id="import-file-input"
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                importThread(file);
+                e.target.value = ""; // Reset input
+              }
+            }}
+          />
         </div>
       </aside>
       )}
@@ -864,6 +1080,9 @@ export default function App() {
                     isLatest={index === messages.length - 1}
                     messageRef={index === messages.length - 1 ? latestMessageRef : undefined}
                     loadingStatus={loadingStatus}
+                    onCopy={copyToClipboard}
+                    onDelete={() => deleteMessage(index)}
+                    onRegenerate={() => regenerateMessage(index)}
                   />
                 ))}
               </div>
