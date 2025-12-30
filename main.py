@@ -1,6 +1,7 @@
 """FastAPI application exposing the /ask endpoint."""
 import json
 import logging
+import os
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -224,6 +225,22 @@ async def get_provider_models(provider: ProviderName, payload: ProviderKeyReques
 
     payload_models = [ProviderModel(**model) for model in models]
     return ProviderModelsResponse(models=payload_models)
+
+
+@app.get("/initial-keys")
+async def get_initial_keys() -> dict[str, str]:
+    """Return API keys from environment variables for prefilling the UI.
+
+    Keys are read from environment variables and returned to the frontend
+    to prefill the configuration panel. This allows users to configure
+    API keys via .env file instead of manually entering them.
+    """
+    return {
+        "openai": os.getenv("OPENAI_API_KEY", ""),
+        "gemini": os.getenv("GEMINI_API_KEY", ""),
+        "claude": os.getenv("CLAUDE_API_KEY", ""),
+        "grok": os.getenv("GROK_API_KEY", ""),
+    }
 
 
 # Serve static frontend files (built by Vite)

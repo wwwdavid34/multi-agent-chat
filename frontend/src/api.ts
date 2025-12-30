@@ -96,3 +96,20 @@ export async function askPanelStream(
     reader.releaseLock();
   }
 }
+
+/**
+ * Fetch initial API keys from environment variables
+ */
+export async function fetchInitialKeys(): Promise<Record<string, string>> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/initial-keys`);
+    if (!res.ok) {
+      console.warn("Failed to fetch initial keys:", res.statusText);
+      return {};
+    }
+    return (await res.json()) as Record<string, string>;
+  } catch (error) {
+    console.warn("Failed to fetch initial keys:", error);
+    return {};
+  }
+}

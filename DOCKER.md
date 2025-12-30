@@ -77,6 +77,24 @@ Edit `.env.docker` to configure:
 
 The application automatically URL-encodes special characters in the PostgreSQL password, so you can use special characters like `@`, `#`, `$`, etc. without manual encoding.
 
+### API Key Prefilling
+
+When you configure API keys in `.env.docker`, they will be automatically prefilled in the web interface settings panel. This provides a better user experience by:
+
+- Automatically loading keys from environment variables on first use
+- Allowing easy verification of which keys are configured
+- Storing keys in browser localStorage after first load
+- User-entered keys take precedence over environment keys
+
+**How it works:**
+1. Set API keys in `.env.docker` (e.g., `OPENAI_API_KEY=sk-...`)
+2. Start the application with Docker Compose
+3. Open the web interface and click "Settings"
+4. API keys will be automatically populated from environment variables
+5. You can toggle visibility and copy keys using the eye and copy buttons
+
+**Note:** Keys are only sent from the backend to frontend on initial page load. User modifications in the UI are stored in browser localStorage and won't be overwritten by environment variables.
+
 ## Common Commands
 
 ### Start services in background

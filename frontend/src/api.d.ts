@@ -8,3 +8,7 @@ export declare function askPanelStream(body: AskRequestBody, callbacks: {
     onResult?: (result: AskResponse) => void;
     onError?: (error: Error) => void;
 }): Promise<void>;
+/**
+ * Fetch initial API keys from environment variables
+ */
+export declare function fetchInitialKeys(): Promise<Record<string, string>>;
