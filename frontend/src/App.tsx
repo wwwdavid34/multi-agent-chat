@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import { askPanel, askPanelStream, fetchInitialKeys } from "./api";
@@ -421,6 +421,42 @@ export default function App() {
     loadInitialKeys();
   }, []); // Run only once on mount
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyboardShortcut(e: KeyboardEvent) {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+      // Cmd/Ctrl + N: New thread
+      if (modKey && e.key === 'n') {
+        e.preventDefault();
+        setIsCreatingThread(true);
+        setNewThreadName("");
+      }
+
+      // Cmd/Ctrl + /: Toggle settings
+      if (modKey && e.key === '/') {
+        e.preventDefault();
+        setConfigOpen((prev) => !prev);
+      }
+
+      // Esc: Close modals
+      if (e.key === 'Escape') {
+        if (configOpen) {
+          e.preventDefault();
+          setConfigOpen(false);
+        }
+        if (isCreatingThread) {
+          e.preventDefault();
+          cancelThreadCreation();
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyboardShortcut);
+    return () => window.removeEventListener('keydown', handleKeyboardShortcut);
+  }, [configOpen, isCreatingThread]);
+
   const togglePanelist = useCallback((id: string) => {
     setEnabledPanelists((prev) => {
       const newSet = new Set(prev);
@@ -634,7 +670,7 @@ export default function App() {
     setNewThreadName("");
   }
 
-  function handleThreadInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+  function handleThreadInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") {
       event.preventDefault();
       cancelThreadCreation();
@@ -1236,6 +1272,16 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }: ChatCom
             onChange={(event) => {
               setQuestion(event.target.value);
               if (error) onClearError();
+            }}
+            onKeyDown={(event) => {
+              const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+              const modKey = isMac ? event.metaKey : event.ctrlKey;
+
+              // Cmd/Ctrl + Enter: Submit
+              if (modKey && event.key === 'Enter' && canSubmit) {
+                event.preventDefault();
+                handleSubmit(event as any);
+              }
             }}
             placeholder="Send a message..."
             rows={1}
