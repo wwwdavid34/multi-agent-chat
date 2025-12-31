@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -106,7 +106,7 @@ async def ask(req: AskRequest) -> AskResponse:
 
 
 @app.post("/ask-stream")
-async def ask_stream(req: AskRequest):
+async def ask_stream(req: AskRequest, request: Request):
     """Streaming endpoint that provides real-time status updates."""
 
     async def event_stream() -> AsyncIterator[str]:
@@ -171,7 +171,17 @@ async def ask_stream(req: AskRequest):
 
             # Stream events from the graph
             async for event in panel_graph.astream(state, config=config):
+                # Check if client disconnected (user clicked stop)
+                if await request.is_disconnected():
+                    logger.info(f"Client disconnected for thread {req.thread_id}, stopping generation")
+                    break
+
                 for node_name, node_output in event.items():
+                    # Check again for disconnection within event processing
+                    if await request.is_disconnected():
+                        logger.info(f"Client disconnected during event processing for thread {req.thread_id}")
+                        return
+
                     # Send status update for each node
                     if node_name in node_status_map:
                         status_message = node_status_map[node_name]
