@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from panel_graph import panel_graph
+from panel_graph import panel_graph, get_storage_mode
 from provider_clients import ProviderName, fetch_provider_models
 
 app = FastAPI(title="AI Discussion Panel")
@@ -120,9 +120,9 @@ async def ask_stream(req: AskRequest):
         if attachment_md:
             question_text = f"{question_text}\n\nAttached images:\n{attachment_md}"
 
-        # If continuing a debate, don't create new state - resume from checkpoint
+        # If continuing a debate, provide empty state to resume from checkpoint
         if req.continue_debate:
-            state = None  # Will resume from checkpoint
+            state = {}  # Empty state tells LangGraph to resume from checkpoint
             logger.info(f"Continuing debate for thread {req.thread_id}")
         else:
             state = {
@@ -247,8 +247,9 @@ async def ask_stream(req: AskRequest):
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception as e:
-            logger.exception("Error during streaming: %s", e)
-            error_data = {"type": "error", "message": str(e)}
+            error_msg = str(e) or f"{type(e).__name__}: {repr(e)}"
+            logger.exception("Error during streaming: %s", error_msg)
+            error_data = {"type": "error", "message": error_msg}
             yield f"data: {json.dumps(error_data)}\n\n"
 
     return StreamingResponse(
@@ -294,6 +295,17 @@ async def get_initial_keys() -> dict[str, str]:
         "claude": os.getenv("CLAUDE_API_KEY", ""),
         "grok": os.getenv("GROK_API_KEY", ""),
     }
+
+
+@app.get("/storage-info")
+async def get_storage_info() -> dict[str, str]:
+    """Return information about the current storage mode.
+
+    Returns whether the app is using in-memory storage (ephemeral) or
+    PostgreSQL database (persistent). This helps users understand if their
+    conversations will persist across restarts.
+    """
+    return get_storage_mode()
 
 
 # Serve static frontend files (built by Vite)

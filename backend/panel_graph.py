@@ -28,6 +28,12 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+# Global variable to track actual storage mode (set during graph compilation)
+_actual_storage_mode: str = "unknown"
+
+# Global reference to keep the PostgreSQL connection context manager alive
+_postgres_cm = None
+
 class DebateRound(TypedDict):
     """Single round of debate with all panelist responses."""
     round_number: int
@@ -939,22 +945,48 @@ def build_panel_graph():
     # Moderator completes the discussion
     builder.add_edge("moderator", END)
 
+    global _actual_storage_mode
+
     if use_in_memory_checkpointer():
         checkpointer = MemorySaver()
+        _actual_storage_mode = "memory"
+        logger.info("Using in-memory storage (ephemeral)")
     else:
+        global _postgres_cm
         try:
-            from langgraph_checkpoint_postgres import PostgresSaver
-        except ModuleNotFoundError:  # pragma: no cover - fallback for new langgraph releases
-            from langgraph.checkpoint.postgres import PostgresSaver
+            # Import async PostgreSQL checkpointer for proper async support
+            try:
+                from langgraph_checkpoint_postgres import AsyncPostgresSaver
+            except ModuleNotFoundError:
+                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-        try:
             pg_url = get_pg_conn_str()
-            # from_conn_string returns a context manager, so we need to enter it
-            checkpointer = PostgresSaver.from_conn_string(pg_url).__enter__()
+
+            # Create async checkpointer with persistent connection
+            # from_conn_string returns a context manager - we need to keep it alive
+            _postgres_cm = AsyncPostgresSaver.from_conn_string(pg_url)
+            checkpointer = _postgres_cm.__enter__()
+
+            _actual_storage_mode = "postgres"
+            logger.info("Using PostgreSQL storage (persistent) with async support")
         except Exception as exc:  # pragma: no cover - fallback in local envs
             logger.warning("Falling back to in-memory checkpointer: %s", exc)
             checkpointer = MemorySaver()
+            _actual_storage_mode = "memory"
     return builder.compile(checkpointer=checkpointer)
+
+
+def get_storage_mode() -> dict[str, str]:
+    """Return information about the current storage mode."""
+    return {
+        "mode": _actual_storage_mode,
+        "persistent": str(_actual_storage_mode == "postgres").lower(),
+        "description": (
+            "In-memory storage (conversations will be lost on restart)"
+            if _actual_storage_mode == "memory"
+            else "PostgreSQL database (conversations persist across restarts)"
+        ),
+    }
 
 
 panel_graph = build_panel_graph()
