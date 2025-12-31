@@ -1020,10 +1020,8 @@ def build_panel_graph():
                 # Create a new event loop for this thread
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                try:
-                    return loop.run_until_complete(_setup_checkpointer())
-                finally:
-                    loop.close()
+                # Don't close the loop - keep it alive to maintain the async context
+                return loop.run_until_complete(_setup_checkpointer())
 
             # Run in a thread to avoid "event loop already running" errors
             result_container = []
