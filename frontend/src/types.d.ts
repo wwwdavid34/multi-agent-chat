@@ -1,4 +1,9 @@
 export type PanelResponses = Record<string, string>;
+export interface DebateRound {
+    round_number: number;
+    panel_responses: PanelResponses;
+    consensus_reached: boolean;
+}
 export type LLMProvider = "openai" | "gemini" | "claude" | "grok";
 export interface ProviderModel {
     id: string;
@@ -21,6 +26,7 @@ export interface AskResponse {
     thread_id: string;
     summary: string;
     panel_responses: PanelResponses;
+    debate_history?: DebateRound[];
 }
 export interface AskRequestBody {
     thread_id: string;
@@ -28,4 +34,8 @@ export interface AskRequestBody {
     attachments?: string[];
     panelists?: PanelistConfigPayload[];
     provider_keys?: ProviderKeyMap;
+    debate_mode?: boolean;
+    max_debate_rounds?: number;
+    step_review?: boolean;
+    continue_debate?: boolean;
 }

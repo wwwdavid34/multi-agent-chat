@@ -1,4 +1,4 @@
-import type { AskRequestBody, AskResponse } from "./types";
+import type { AskRequestBody, AskResponse, DebateRound } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -24,14 +24,18 @@ export async function askPanelStream(
   body: AskRequestBody,
   callbacks: {
     onStatus?: (message: string) => void;
+    onDebateRound?: (round: DebateRound) => void;
     onResult?: (result: AskResponse) => void;
+    onDebatePaused?: (result: Partial<AskResponse>) => void;
     onError?: (error: Error) => void;
-  }
+  },
+  signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/ask-stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok) {
@@ -69,11 +73,20 @@ export async function askPanelStream(
 
             if (event.type === "status" && callbacks.onStatus) {
               callbacks.onStatus(event.message);
+            } else if (event.type === "debate_round" && callbacks.onDebateRound) {
+              callbacks.onDebateRound(event.round);
+            } else if (event.type === "debate_paused" && callbacks.onDebatePaused) {
+              callbacks.onDebatePaused({
+                thread_id: event.thread_id,
+                panel_responses: event.panel_responses,
+                debate_history: event.debate_history,
+              });
             } else if (event.type === "result" && callbacks.onResult) {
               callbacks.onResult({
                 thread_id: event.thread_id,
                 summary: event.summary,
                 panel_responses: event.panel_responses,
+                debate_history: event.debate_history,
               });
             } else if (event.type === "error" && callbacks.onError) {
               callbacks.onError(new Error(event.message));
@@ -88,6 +101,12 @@ export async function askPanelStream(
       }
     }
   } catch (error) {
+    // Don't treat abort as an error - it's user-initiated
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.log('Request aborted by user');
+      return;
+    }
+
     if (callbacks.onError) {
       callbacks.onError(error instanceof Error ? error : new Error(String(error)));
     }
@@ -99,17 +118,47 @@ export async function askPanelStream(
 
 /**
  * Fetch initial API keys from environment variables
+ * Retries up to 5 times with exponential backoff if backend isn't ready yet
  */
 export async function fetchInitialKeys(): Promise<Record<string, string>> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/initial-keys`);
-    if (!res.ok) {
-      console.warn("Failed to fetch initial keys:", res.statusText);
+  const maxRetries = 5;
+  const baseDelay = 500; // Start with 500ms delay
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/initial-keys`);
+      if (!res.ok) {
+        console.warn(`[API Keys] Attempt ${attempt + 1}/${maxRetries}: Failed to fetch initial keys:`, res.statusText);
+
+        // If this is not the last attempt, wait and retry
+        if (attempt < maxRetries - 1) {
+          const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
+          console.log(`[API Keys] Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        console.error('[API Keys] All retry attempts failed');
+        return {};
+      }
+      const data = (await res.json()) as Record<string, string>;
+      console.log(`[API Keys] Successfully fetched on attempt ${attempt + 1}`);
+      return data;
+    } catch (error) {
+      console.warn(`[API Keys] Attempt ${attempt + 1}/${maxRetries}: Failed to fetch initial keys:`, error);
+
+      // If this is not the last attempt, wait and retry
+      if (attempt < maxRetries - 1) {
+        const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
+        console.log(`[API Keys] Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      console.error('[API Keys] All retry attempts failed');
       return {};
     }
-    return (await res.json()) as Record<string, string>;
-  } catch (error) {
-    console.warn("Failed to fetch initial keys:", error);
-    return {};
   }
+
+  return {};
 }

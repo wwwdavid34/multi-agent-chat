@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { askPanelStream, fetchInitialKeys } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
+import { DebateViewer } from "./components/DebateViewer";
+import { RegenerateModal } from "./components/RegenerateModal";
 import { ThemeToggle } from "./components/theme-toggle";
 import { fetchModelsForProvider, PROVIDER_LABELS } from "./lib/modelProviders";
 import { findBestModelMatch } from "./lib/modelMatcher";
@@ -28,19 +30,20 @@ const createPanelist = (existingPanelists) => ({
     provider: "openai",
     model: "",
 });
-const MessageBubble = memo(function MessageBubble({ entry, onToggle, isLatest = false, messageRef, loadingStatus = "Panel is thinking...", onCopy, onDelete, onRegenerate, }) {
+const MessageBubble = memo(function MessageBubble({ entry, onToggle, isLatest = false, messageRef, loadingStatus = "Panel is thinking...", onCopy, onDelete, onRegenerate, onContinueDebate, }) {
     const [viewMode, setViewMode] = React.useState("list");
-    return (_jsxs(motion.article, { ref: messageRef, className: "flex flex-col gap-6 min-w-0 group/message", initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] }, children: [_jsxs("div", { className: "flex flex-col items-end self-end text-right gap-2 w-full max-w-[85%] sm:max-w-[75%] md:max-w-[65%]", children: [_jsxs("div", { className: "flex items-center gap-2 w-full justify-end", children: [_jsx("span", { className: "text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1", children: "You" }), _jsx("div", { className: "flex gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity", children: onCopy && (_jsx("button", { type: "button", onClick: () => onCopy(entry.question), className: "p-1 rounded hover:bg-muted/40 transition-colors", title: "Copy question", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) })) })] }), _jsxs(motion.div, { className: "w-full bg-foreground text-background rounded-2xl px-5 py-4 shadow-sm break-words", initial: { opacity: 0, x: 20 }, animate: { opacity: 1, x: 0 }, transition: { duration: 0.4, delay: 0.1, ease: [0.16, 1, 0.3, 1] }, children: [_jsx(Markdown, { content: entry.question }), entry.attachments.length > 0 && (_jsx("div", { className: "mt-4 flex flex-wrap gap-2.5", children: entry.attachments.map((src, index) => (_jsx(motion.img, { src: src, alt: `attachment-${index + 1}`, className: "w-20 h-20 object-cover rounded-xl border-2 border-background/30 shadow-sm", initial: { opacity: 0, scale: 0.8 }, animate: { opacity: 1, scale: 1 }, transition: { duration: 0.3, delay: 0.2 + index * 0.05 } }, index))) }))] })] }), _jsxs("div", { className: "flex flex-col items-start self-start text-left gap-2 w-full", children: [_jsxs("div", { className: "flex items-center gap-2 w-full", children: [_jsx("span", { className: "text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1", children: "Panel" }), _jsxs("div", { className: "flex gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity", children: [onCopy && entry.summary && (_jsx("button", { type: "button", onClick: () => onCopy(entry.summary), className: "p-1 rounded hover:bg-muted/40 transition-colors", title: "Copy response", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) })), onRegenerate && (_jsx("button", { type: "button", onClick: onRegenerate, className: "p-1 rounded hover:bg-muted/40 transition-colors", title: "Regenerate response", children: _jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: _jsx("path", { d: "M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" }) }) })), onDelete && (_jsx("button", { type: "button", onClick: onDelete, className: "p-1 rounded hover:bg-destructive/20 transition-colors", title: "Delete message", children: _jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground hover:text-destructive", fill: "none", stroke: "currentColor", strokeWidth: "2", children: _jsx("path", { d: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }) }) }))] })] }), _jsx(motion.div, { className: "w-full break-words", initial: { opacity: 0, x: -20 }, animate: { opacity: 1, x: 0 }, transition: { duration: 0.4, delay: 0.2, ease: [0.16, 1, 0.3, 1] }, children: entry.summary ? (_jsxs(_Fragment, { children: [_jsx("div", { className: "prose prose-sm dark:prose-invert max-w-none", children: _jsx(Markdown, { content: entry.summary }) }), _jsxs("div", { className: "mt-5 flex items-center gap-3", children: [_jsxs("button", { type: "button", className: "inline-flex items-center gap-2 text-[13px] font-medium bg-transparent text-accent/90 border-none p-0 cursor-pointer hover:text-accent transition-colors", onClick: onToggle, children: [entry.expanded ? "Hide individual responses" : "Show individual responses", _jsx("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", className: `w-3.5 h-3.5 transition-transform duration-200 ${entry.expanded ? "rotate-180" : ""}`, children: _jsx("path", { fill: "currentColor", d: "M7 10l5 5 5-5z" }) })] }), entry.expanded && Object.keys(entry.panel_responses).length > 1 && (_jsxs("div", { className: "flex gap-1 border border-border/50 rounded-md p-0.5", children: [_jsx("button", { type: "button", onClick: () => setViewMode("list"), className: `px-2 py-1 text-[11px] rounded transition-colors ${viewMode === "list"
-                                                        ? "bg-foreground/10 text-foreground"
-                                                        : "text-muted-foreground hover:text-foreground"}`, title: "List view", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("line", { x1: "8", y1: "6", x2: "21", y2: "6" }), _jsx("line", { x1: "8", y1: "12", x2: "21", y2: "12" }), _jsx("line", { x1: "8", y1: "18", x2: "21", y2: "18" }), _jsx("line", { x1: "3", y1: "6", x2: "3.01", y2: "6" }), _jsx("line", { x1: "3", y1: "12", x2: "3.01", y2: "12" }), _jsx("line", { x1: "3", y1: "18", x2: "3.01", y2: "18" })] }) }), _jsx("button", { type: "button", onClick: () => setViewMode("grid"), className: `px-2 py-1 text-[11px] rounded transition-colors ${viewMode === "grid"
-                                                        ? "bg-foreground/10 text-foreground"
-                                                        : "text-muted-foreground hover:text-foreground"}`, title: "Grid view", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "3", y: "3", width: "7", height: "7" }), _jsx("rect", { x: "14", y: "3", width: "7", height: "7" }), _jsx("rect", { x: "14", y: "14", width: "7", height: "7" }), _jsx("rect", { x: "3", y: "14", width: "7", height: "7" })] }) })] }))] }), _jsx(AnimatePresence, { children: entry.expanded && (_jsx(motion.div, { className: `mt-6 border-t border-border/50 pt-6 ${viewMode === "grid"
-                                            ? "grid grid-cols-1 md:grid-cols-2 gap-4"
-                                            : "flex flex-col gap-4"}`, initial: { opacity: 0, height: 0 }, animate: { opacity: 1, height: "auto" }, exit: { opacity: 0, height: 0 }, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] }, children: Object.entries(entry.panel_responses).map(([name, text], idx) => {
-                                            // Find the panelist config to show model info
-                                            const panelist = entry.panelists.find((p) => p.name === name);
-                                            return (_jsxs(motion.article, { className: "border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response", initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.3, delay: idx * 0.05 }, children: [_jsxs("div", { className: "flex items-center justify-between gap-3 mb-3", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsx("div", { className: "w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-semibold text-xs", children: name.charAt(0).toUpperCase() }), _jsxs("div", { className: "flex flex-col", children: [_jsx("h4", { className: "m-0 text-foreground text-[13px] font-semibold tracking-wide", children: name }), panelist && (_jsxs("span", { className: "text-[10px] text-muted-foreground mt-0.5", children: [PROVIDER_LABELS[panelist.provider], " \u00B7 ", panelist.model] }))] })] }), onCopy && (_jsx("button", { type: "button", onClick: () => onCopy(text), className: "opacity-0 group-hover/response:opacity-100 p-1.5 rounded hover:bg-muted/40 transition-all", title: "Copy response", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) }))] }), _jsx("div", { className: "text-[13px] leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none", children: _jsx(Markdown, { content: text }) })] }, name));
-                                        }) })) })] })) : (_jsxs("div", { className: "flex items-center gap-3", children: [_jsxs(motion.div, { className: "flex gap-1.5", initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.3 }, children: [_jsx(motion.div, { className: "w-2 h-2 rounded-full bg-muted-foreground/40", animate: { scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }, transition: { duration: 1.2, repeat: Infinity, delay: 0 } }), _jsx(motion.div, { className: "w-2 h-2 rounded-full bg-muted-foreground/40", animate: { scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }, transition: { duration: 1.2, repeat: Infinity, delay: 0.2 } }), _jsx(motion.div, { className: "w-2 h-2 rounded-full bg-muted-foreground/40", animate: { scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }, transition: { duration: 1.2, repeat: Infinity, delay: 0.4 } })] }), _jsx("span", { className: "text-[13px] text-muted-foreground/60", children: loadingStatus })] })) })] })] }));
+    return (_jsxs(motion.article, { ref: messageRef, className: "flex flex-col gap-6 min-w-0 group/message", initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] }, children: [_jsxs("div", { className: "flex flex-col items-end self-end text-right gap-2 w-full max-w-[90%] sm:max-w-[85%] md:max-w-[80%]", children: [_jsxs("div", { className: "flex items-center gap-2 w-full justify-end", children: [_jsx("span", { className: "text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1", children: "You" }), _jsx("div", { className: "flex gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity", children: onCopy && (_jsx("button", { type: "button", onClick: () => onCopy(entry.question), className: "p-1 rounded hover:bg-muted/40 transition-colors", title: "Copy question", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) })) })] }), _jsx(motion.div, { className: "w-full bg-foreground text-background rounded-2xl px-4 py-3 shadow-sm break-words max-h-[400px] overflow-y-auto prose-sm", initial: { opacity: 0, x: 20 }, animate: { opacity: 1, x: 0 }, transition: { duration: 0.4, delay: 0.1, ease: [0.16, 1, 0.3, 1] }, children: _jsxs("div", { className: "text-sm leading-relaxed", children: [_jsx(Markdown, { content: entry.question }), entry.attachments.length > 0 && (_jsx("div", { className: "mt-4 flex flex-wrap gap-2.5", children: entry.attachments.map((src, index) => (_jsx(motion.img, { src: src, alt: `attachment-${index + 1}`, className: "w-20 h-20 object-cover rounded-xl border-2 border-background/30 shadow-sm", initial: { opacity: 0, scale: 0.8 }, animate: { opacity: 1, scale: 1 }, transition: { duration: 0.3, delay: 0.2 + index * 0.05 } }, index))) }))] }) })] }), _jsxs("div", { className: "flex flex-col items-start self-start text-left gap-2 w-full", children: [_jsxs("div", { className: "flex items-center gap-2 w-full flex-wrap", children: [_jsx("span", { className: "text-[11px] font-medium tracking-wider uppercase text-muted-foreground/70 px-1", children: "Panel" }), entry.summary && (_jsx(_Fragment, { children: entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (_jsxs("div", { className: "flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/30", children: [_jsxs("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-accent", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }), _jsx("path", { d: "M8 10h.01M12 10h.01M16 10h.01" })] }), _jsx("span", { className: "text-[10px] font-semibold text-accent uppercase tracking-wide", children: "Debate Mode" }), _jsxs("span", { className: "text-[10px] text-accent/70", children: [entry.debate_history.length, " round", entry.debate_history.length !== 1 ? 's' : '', entry.debate_history[entry.debate_history.length - 1]?.consensus_reached &&
+                                                    _jsx("span", { className: "ml-1", children: "\u2022 Consensus \u2713" })] })] })) : (_jsxs("div", { className: "flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 border border-border/40", children: [_jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: _jsx("path", { d: "M13 2L3 14h9l-1 8 10-12h-9l1-8z" }) }), _jsx("span", { className: "text-[10px] font-semibold text-muted-foreground uppercase tracking-wide", children: "Quick Response" })] })) })), _jsxs("div", { className: "flex gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity ml-auto", children: [onCopy && entry.summary && (_jsx("button", { type: "button", onClick: () => onCopy(entry.summary), className: "p-1 rounded hover:bg-muted/40 transition-colors", title: "Copy response", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) })), onRegenerate && (_jsx("button", { type: "button", onClick: onRegenerate, className: "p-1 rounded hover:bg-muted/40 transition-colors", title: "Regenerate response", children: _jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: _jsx("path", { d: "M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" }) }) })), onDelete && (_jsx("button", { type: "button", onClick: onDelete, className: "p-1 rounded hover:bg-destructive/20 transition-colors", title: "Delete message", children: _jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-muted-foreground hover:text-destructive", fill: "none", stroke: "currentColor", strokeWidth: "2", children: _jsx("path", { d: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }) }) }))] })] }), _jsx(motion.div, { className: "w-full break-words", initial: { opacity: 0, x: -20 }, animate: { opacity: 1, x: 0 }, transition: { duration: 0.4, delay: 0.2, ease: [0.16, 1, 0.3, 1] }, children: entry.summary ? (_jsxs(_Fragment, { children: [_jsx("div", { className: "prose prose-sm dark:prose-invert max-w-none", children: _jsx(Markdown, { content: entry.summary }) }), entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (_jsx(DebateViewer, { debateHistory: entry.debate_history, panelists: entry.panelists, onCopy: onCopy, stepReview: entry.step_review, debatePaused: entry.debate_paused, onContinue: onContinueDebate })) : (_jsxs(_Fragment, { children: [_jsxs("div", { className: "mt-5 flex items-center gap-3", children: [_jsxs("button", { type: "button", className: "inline-flex items-center gap-2 text-[13px] font-medium bg-transparent text-accent/90 border-none p-0 cursor-pointer hover:text-accent transition-colors", onClick: onToggle, children: [entry.expanded ? "Hide individual responses" : "Show individual responses", _jsx("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", className: `w-3.5 h-3.5 transition-transform duration-200 ${entry.expanded ? "rotate-180" : ""}`, children: _jsx("path", { fill: "currentColor", d: "M7 10l5 5 5-5z" }) })] }), entry.expanded && Object.keys(entry.panel_responses).length > 1 && (_jsxs("div", { className: "flex gap-1 border border-border/50 rounded-md p-0.5", children: [_jsx("button", { type: "button", onClick: () => setViewMode("list"), className: `px-2 py-1 text-[11px] rounded transition-colors ${viewMode === "list"
+                                                                ? "bg-foreground/10 text-foreground"
+                                                                : "text-muted-foreground hover:text-foreground"}`, title: "List view", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("line", { x1: "8", y1: "6", x2: "21", y2: "6" }), _jsx("line", { x1: "8", y1: "12", x2: "21", y2: "12" }), _jsx("line", { x1: "8", y1: "18", x2: "21", y2: "18" }), _jsx("line", { x1: "3", y1: "6", x2: "3.01", y2: "6" }), _jsx("line", { x1: "3", y1: "12", x2: "3.01", y2: "12" }), _jsx("line", { x1: "3", y1: "18", x2: "3.01", y2: "18" })] }) }), _jsx("button", { type: "button", onClick: () => setViewMode("grid"), className: `px-2 py-1 text-[11px] rounded transition-colors ${viewMode === "grid"
+                                                                ? "bg-foreground/10 text-foreground"
+                                                                : "text-muted-foreground hover:text-foreground"}`, title: "Grid view", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "3", y: "3", width: "7", height: "7" }), _jsx("rect", { x: "14", y: "3", width: "7", height: "7" }), _jsx("rect", { x: "14", y: "14", width: "7", height: "7" }), _jsx("rect", { x: "3", y: "14", width: "7", height: "7" })] }) })] }))] }), _jsx(AnimatePresence, { children: entry.expanded && (_jsx(motion.div, { className: `mt-6 border-t border-border/50 pt-6 ${viewMode === "grid"
+                                                    ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                                                    : "flex flex-col gap-4"}`, initial: { opacity: 0, height: 0 }, animate: { opacity: 1, height: "auto" }, exit: { opacity: 0, height: 0 }, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] }, children: Object.entries(entry.panel_responses).map(([name, text], idx) => {
+                                                    // Find the panelist config to show model info
+                                                    const panelist = entry.panelists.find((p) => p.name === name);
+                                                    return (_jsxs(motion.article, { className: "border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response", initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.3, delay: idx * 0.05 }, children: [_jsxs("div", { className: "flex items-center justify-between gap-3 mb-3", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsx("div", { className: "w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-semibold text-xs", children: name.charAt(0).toUpperCase() }), _jsxs("div", { className: "flex flex-col", children: [_jsx("h4", { className: "m-0 text-foreground text-[13px] font-semibold tracking-wide", children: name }), panelist && (_jsxs("span", { className: "text-[10px] text-muted-foreground mt-0.5", children: [PROVIDER_LABELS[panelist.provider], " \u00B7 ", panelist.model] }))] })] }), onCopy && (_jsx("button", { type: "button", onClick: () => onCopy(text), className: "opacity-0 group-hover/response:opacity-100 p-1.5 rounded hover:bg-muted/40 transition-all", title: "Copy response", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) }))] }), _jsx("div", { className: "text-[13px] leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none", children: _jsx(Markdown, { content: text }) })] }, name));
+                                                }) })) })] }))] })) : (_jsxs("div", { className: "flex items-center gap-3", children: [_jsxs(motion.div, { className: "flex gap-1.5", initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.3 }, children: [_jsx(motion.div, { className: "w-2 h-2 rounded-full bg-muted-foreground/40", animate: { scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }, transition: { duration: 1.2, repeat: Infinity, delay: 0 } }), _jsx(motion.div, { className: "w-2 h-2 rounded-full bg-muted-foreground/40", animate: { scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }, transition: { duration: 1.2, repeat: Infinity, delay: 0.2 } }), _jsx(motion.div, { className: "w-2 h-2 rounded-full bg-muted-foreground/40", animate: { scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }, transition: { duration: 1.2, repeat: Infinity, delay: 0.4 } })] }), _jsx("span", { className: "text-[13px] text-muted-foreground/60", children: loadingStatus })] })) })] })] }));
 });
 MessageBubble.displayName = "MessageBubble";
 export default function App() {
@@ -80,9 +83,15 @@ export default function App() {
     const [modelStatus, setModelStatus] = useState({});
     const [configOpen, setConfigOpen] = useState(false);
     const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+    const [regenerateModalOpen, setRegenerateModalOpen] = useState(false);
+    const [regenerateIndex, setRegenerateIndex] = useState(null);
+    const [debateMode, setDebateMode] = useState(() => parseJSON(localStorage.getItem("debateMode"), false));
+    const [maxDebateRounds, setMaxDebateRounds] = useState(() => parseJSON(localStorage.getItem("maxDebateRounds"), 3));
+    const [stepReview, setStepReview] = useState(() => parseJSON(localStorage.getItem("stepReview"), false));
     const [loading, setLoading] = useState(false);
     const [loadingStatus, setLoadingStatus] = useState("Panel is thinking...");
     const [error, setError] = useState(null);
+    const [abortController, setAbortController] = useState(null);
     const [showScrollToBottom, setShowScrollToBottom] = useState(false);
     const [sidebarVisible, setSidebarVisible] = useState(() => {
         const stored = localStorage.getItem("sidebarVisible");
@@ -142,6 +151,15 @@ export default function App() {
     useEffect(() => {
         localStorage.setItem("enabledPanelists", JSON.stringify(Array.from(enabledPanelists)));
     }, [enabledPanelists]);
+    useEffect(() => {
+        localStorage.setItem("debateMode", JSON.stringify(debateMode));
+    }, [debateMode]);
+    useEffect(() => {
+        localStorage.setItem("maxDebateRounds", JSON.stringify(maxDebateRounds));
+    }, [maxDebateRounds]);
+    useEffect(() => {
+        localStorage.setItem("stepReview", JSON.stringify(stepReview));
+    }, [stepReview]);
     // Sync enabled panelists when panelists change (enable new ones by default)
     useEffect(() => {
         setEnabledPanelists((prev) => {
@@ -178,19 +196,29 @@ export default function App() {
     // Fetch initial API keys from environment variables on mount
     useEffect(() => {
         async function loadInitialKeys() {
+            console.log('[API Keys] Fetching initial keys from backend...');
             const initialKeys = await fetchInitialKeys();
+            console.log('[API Keys] Received from backend:', Object.keys(initialKeys).filter(k => initialKeys[k]).join(', ') || 'none');
             // Only populate keys that aren't already set in localStorage
             const storedKeys = parseJSON(localStorage.getItem("providerKeys"), {});
+            console.log('[API Keys] Stored keys in localStorage:', Object.keys(storedKeys).filter(k => storedKeys[k]?.trim()).join(', ') || 'none');
             const mergedKeys = { ...storedKeys };
+            let keysAdded = 0;
             for (const [provider, key] of Object.entries(initialKeys)) {
                 // Only use environment key if no stored key exists
                 if (key && !storedKeys[provider]?.trim()) {
                     mergedKeys[provider] = key;
+                    keysAdded++;
+                    console.log(`[API Keys] Added ${provider} key from backend`);
                 }
             }
             // Update state if we have new keys
             if (JSON.stringify(mergedKeys) !== JSON.stringify(storedKeys)) {
+                console.log(`[API Keys] Updating provider keys (${keysAdded} new keys)`);
                 setProviderKeys(mergedKeys);
+            }
+            else {
+                console.log('[API Keys] No new keys to add');
             }
         }
         loadInitialKeys();
@@ -210,11 +238,6 @@ export default function App() {
             if (modKey && e.key === '/') {
                 e.preventDefault();
                 setConfigOpen((prev) => !prev);
-            }
-            // ?: Show keyboard shortcuts help
-            if (e.key === '?' && !modKey) {
-                e.preventDefault();
-                setShowKeyboardShortcuts(true);
             }
             // Esc: Close modals
             if (e.key === 'Escape') {
@@ -268,15 +291,22 @@ export default function App() {
         const entries = Object.entries(providerKeys).filter(([, value]) => Boolean(value?.trim()));
         return Object.fromEntries(entries.map(([key, value]) => [key, value.trim()]));
     }, [providerKeys]);
-    const handleSend = useCallback(async ({ question, attachments }) => {
+    const handleSend = useCallback(async ({ question, attachments, customDebateMode, customMaxRounds, customStepReview, }) => {
         const hasContent = Boolean(question.trim()) || attachments.length > 0;
         if (!hasContent || loading) {
             return;
         }
         setLoading(true);
         setError(null);
+        // Create abort controller for this request
+        const controller = new AbortController();
+        setAbortController(controller);
         const sanitizedQuestion = question.trim() || "See attached images.";
         const entryId = `${threadId}-${Date.now()}`;
+        // Use custom debate settings if provided, otherwise use global settings
+        const useDebateMode = customDebateMode !== undefined ? customDebateMode : debateMode;
+        const useMaxRounds = customMaxRounds !== undefined ? customMaxRounds : maxDebateRounds;
+        const useStepReview = customStepReview !== undefined ? customStepReview : stepReview;
         // Immediately add user message with loading state for assistant response
         const optimisticEntry = {
             id: entryId,
@@ -286,6 +316,10 @@ export default function App() {
             panel_responses: {},
             panelists: panelists, // Store panelist configs to show model info later
             expanded: false,
+            debate_mode: useDebateMode,
+            max_debate_rounds: useMaxRounds,
+            step_review: useStepReview,
+            debate_history: [],
         };
         setConversations((prev) => ({
             ...prev,
@@ -298,9 +332,41 @@ export default function App() {
                 attachments,
                 panelists: preparedPanelists,
                 provider_keys: sanitizedProviderKeys,
+                debate_mode: useDebateMode,
+                max_debate_rounds: useMaxRounds,
+                step_review: useStepReview,
             }, {
                 onStatus: (message) => {
                     setLoadingStatus(message);
+                },
+                onDebateRound: (round) => {
+                    // Update the entry with the new debate round in real-time
+                    setConversations((prev) => ({
+                        ...prev,
+                        [threadId]: prev[threadId]?.map((entry) => entry.id === entryId
+                            ? {
+                                ...entry,
+                                debate_history: [...(entry.debate_history || []), round],
+                            }
+                            : entry) ?? [],
+                    }));
+                },
+                onDebatePaused: (result) => {
+                    // Debate paused for user review
+                    setConversations((prev) => ({
+                        ...prev,
+                        [threadId]: prev[threadId]?.map((entry) => entry.id === entryId
+                            ? {
+                                ...entry,
+                                panel_responses: result.panel_responses || entry.panel_responses,
+                                debate_history: entry.debate_history,
+                                debate_paused: true,
+                            }
+                            : entry) ?? [],
+                    }));
+                    // Clear loading state when debate pauses
+                    setLoading(false);
+                    setLoadingStatus("Panel is thinking...");
                 },
                 onResult: (result) => {
                     // Update the entry with the actual response
@@ -311,6 +377,9 @@ export default function App() {
                                 ...entry,
                                 summary: result.summary,
                                 panel_responses: result.panel_responses,
+                                // Keep accumulated debate history from streaming (onDebateRound)
+                                debate_history: entry.debate_history,
+                                debate_paused: false,
                             }
                             : entry) ?? [],
                     }));
@@ -325,9 +394,19 @@ export default function App() {
                     setLoading(false);
                     setLoadingStatus("Panel is thinking..."); // Reset status
                 },
-            });
+            }, controller.signal);
         }
         catch (err) {
+            // Don't show error if request was aborted by user, but still clean up
+            if (err instanceof Error && err.name === 'AbortError') {
+                console.log('Request aborted by user');
+                // Remove the optimistic entry when aborted
+                setConversations((prev) => ({
+                    ...prev,
+                    [threadId]: prev[threadId]?.filter((entry) => entry.id !== entryId) ?? [],
+                }));
+                return;
+            }
             // Remove the optimistic entry on error
             setConversations((prev) => ({
                 ...prev,
@@ -339,8 +418,103 @@ export default function App() {
         finally {
             setLoading(false);
             setLoadingStatus("Panel is thinking..."); // Reset status
+            setAbortController(null); // Clean up abort controller
         }
-    }, [loading, preparedPanelists, sanitizedProviderKeys, threadId]);
+    }, [loading, preparedPanelists, sanitizedProviderKeys, threadId, debateMode, maxDebateRounds, stepReview]);
+    const handleContinueDebate = useCallback(async (entryId) => {
+        const entry = conversations[threadId]?.find((e) => e.id === entryId);
+        if (!entry || !entry.debate_paused) {
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        // Create abort controller for this request
+        const controller = new AbortController();
+        setAbortController(controller);
+        try {
+            await askPanelStream({
+                thread_id: threadId.trim(),
+                question: "", // Not needed for continuation
+                attachments: [],
+                panelists: preparedPanelists,
+                provider_keys: sanitizedProviderKeys,
+                continue_debate: true, // Signal this is a continuation
+            }, {
+                onStatus: (message) => {
+                    setLoadingStatus(message);
+                },
+                onDebateRound: (round) => {
+                    // Add the new debate round
+                    setConversations((prev) => ({
+                        ...prev,
+                        [threadId]: prev[threadId]?.map((e) => e.id === entryId
+                            ? {
+                                ...e,
+                                debate_history: [...(e.debate_history || []), round],
+                            }
+                            : e) ?? [],
+                    }));
+                },
+                onDebatePaused: (result) => {
+                    // Still paused - waiting for next round
+                    setConversations((prev) => ({
+                        ...prev,
+                        [threadId]: prev[threadId]?.map((e) => e.id === entryId
+                            ? {
+                                ...e,
+                                panel_responses: result.panel_responses || e.panel_responses,
+                                debate_paused: true,
+                            }
+                            : e) ?? [],
+                    }));
+                    // Clear loading state when debate pauses
+                    setLoading(false);
+                    setLoadingStatus("Panel is thinking...");
+                },
+                onResult: (result) => {
+                    // Debate complete - got final summary
+                    setConversations((prev) => ({
+                        ...prev,
+                        [threadId]: prev[threadId]?.map((e) => e.id === entryId
+                            ? {
+                                ...e,
+                                summary: result.summary,
+                                panel_responses: result.panel_responses,
+                                debate_paused: false,
+                            }
+                            : e) ?? [],
+                    }));
+                },
+                onError: (err) => {
+                    setError(err.message);
+                    setLoading(false);
+                    setLoadingStatus("Panel is thinking...");
+                },
+            }, controller.signal);
+        }
+        catch (err) {
+            // Don't show error if request was aborted by user
+            if (err instanceof Error && err.name === 'AbortError') {
+                console.log('Request aborted by user');
+                return;
+            }
+            setError(err instanceof Error ? err.message : "Something went wrong");
+        }
+        finally {
+            setLoading(false);
+            setLoadingStatus("Panel is thinking...");
+            setAbortController(null); // Clean up abort controller
+        }
+    }, [conversations, threadId, preparedPanelists, sanitizedProviderKeys]);
+    const stopGeneration = useCallback(() => {
+        if (abortController) {
+            console.log('Stopping generation...');
+            abortController.abort();
+            setAbortController(null);
+            setLoading(false);
+            setLoadingStatus("Panel is thinking...");
+        }
+    }, [abortController]);
     const handleScrollToBottom = useCallback(() => {
         const el = messageListRef.current;
         if (!el)
@@ -656,18 +830,31 @@ export default function App() {
             [threadId]: prev[threadId]?.filter((_, i) => i !== index) ?? [],
         }));
     }, [threadId]);
-    const regenerateMessage = useCallback(async (index) => {
-        const entry = conversations[threadId]?.[index];
+    const openRegenerateModal = useCallback((index) => {
+        setRegenerateIndex(index);
+        setRegenerateModalOpen(true);
+    }, []);
+    const confirmRegenerate = useCallback(async (useDebateMode, rounds, useStepReview) => {
+        if (regenerateIndex === null)
+            return;
+        const entry = conversations[threadId]?.[regenerateIndex];
         if (!entry)
             return;
-        // Remove the old entry and create a new one
+        // Remove the old entry
         setConversations((prev) => ({
             ...prev,
-            [threadId]: prev[threadId]?.filter((_, i) => i !== index) ?? [],
+            [threadId]: prev[threadId]?.filter((_, i) => i !== regenerateIndex) ?? [],
         }));
-        // Re-send the question
-        await handleSend({ question: entry.question, attachments: entry.attachments });
-    }, [threadId, conversations, handleSend]);
+        // Re-send the question with custom debate settings
+        await handleSend({
+            question: entry.question,
+            attachments: entry.attachments,
+            customDebateMode: useDebateMode,
+            customMaxRounds: rounds,
+            customStepReview: useStepReview,
+        });
+        setRegenerateIndex(null);
+    }, [regenerateIndex, threadId, conversations, handleSend]);
     return (_jsxs("div", { className: "flex h-screen w-full overflow-hidden bg-background", children: [sidebarVisible && (_jsxs("aside", { className: "hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 border-r border-border/60 relative", children: [_jsxs("div", { className: "flex items-center justify-between gap-3", children: [_jsx("h2", { className: "text-lg font-semibold m-0 text-foreground tracking-tight", children: "Conversations" }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsx("button", { type: "button", className: "w-8 h-8 rounded-lg border border-border/60 bg-muted/30 text-foreground text-lg font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/50 transition-all", onClick: () => {
                                             setIsCreatingThread(true);
                                             setNewThreadName("");
@@ -685,15 +872,25 @@ export default function App() {
                                     }
                                 } }), _jsxs("button", { type: "button", onClick: () => setShowKeyboardShortcuts(true), className: "flex items-center justify-center gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all", title: "Keyboard Shortcuts", children: [_jsxs("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "2", y: "4", width: "20", height: "16", rx: "2" }), _jsx("path", { d: "M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" })] }), "Keyboard Shortcuts"] })] })] })), !sidebarVisible && (_jsx("button", { type: "button", onClick: () => setSidebarVisible(true), className: "hidden lg:flex fixed left-4 top-6 z-50 w-10 h-10 items-center justify-center rounded-lg bg-card border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40 hover:border-accent/50 transition-all shadow-lg", "aria-label": "Show sidebar", title: "Show sidebar", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-5 h-5", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M3 3h18v18H3V3z" }), _jsx("path", { d: "M10 3v18" }), _jsx("path", { d: "M14 8l3 3-3 3" })] }) })), _jsxs("main", { className: "flex-1 overflow-hidden bg-transparent flex flex-col", children: [_jsxs("div", { className: "mx-auto w-full max-w-4xl px-4 md:px-6 lg:px-8 py-6 flex flex-col gap-5", children: [_jsx("header", { className: "flex flex-col gap-2", children: _jsxs("div", { className: "min-w-0", children: [_jsx("p", { className: "m-0 text-[11px] text-muted-foreground/70 tracking-wider uppercase font-medium", children: "Thread" }), _jsx("h1", { className: "mt-0.5 mb-0 text-2xl font-semibold text-foreground truncate tracking-tight", children: threadId })] }) }), _jsx("div", { className: "flex flex-wrap items-center gap-2 text-xs text-muted-foreground", children: panelistSummaries.map((summary) => (_jsxs("button", { type: "button", onClick: () => togglePanelist(summary.id), className: `inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 transition-all cursor-pointer ${summary.enabled
                                         ? "border-border/40 bg-card/50 hover:bg-card hover:border-accent/40"
-                                        : "border-border/20 bg-muted/20 opacity-50 hover:opacity-70"}`, title: summary.enabled ? "Click to disable" : "Click to enable", children: [_jsx("span", { className: `font-semibold text-[12px] ${summary.enabled ? "text-foreground" : "text-muted-foreground"}`, children: summary.name }), _jsxs("span", { className: "text-muted-foreground text-[11px]", children: ["\u00B7 ", summary.provider, summary.model ? ` · ${summary.model}` : ""] }), summary.enabled && (_jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-accent", fill: "currentColor", children: _jsx("circle", { cx: "12", cy: "12", r: "4" }) }))] }, summary.id))) })] }), _jsxs("section", { className: "flex flex-1 min-h-0 flex-col relative", children: [_jsx("div", { className: "flex-1 overflow-y-auto scroll-smooth", ref: messageListRef, children: _jsxs("div", { className: "flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6", children: [messages.length === 0 && (_jsx("div", { className: "flex-1 flex items-center justify-center", children: _jsx("p", { className: "text-muted-foreground/60 text-center text-sm", children: "Start a conversation by asking a question below." }) })), messages.map((entry, index) => (_jsx(MessageBubble, { entry: entry, onToggle: () => toggleEntry(index), isLatest: index === messages.length - 1, messageRef: index === messages.length - 1 ? latestMessageRef : undefined, loadingStatus: loadingStatus, onCopy: copyToClipboard, onDelete: () => deleteMessage(index), onRegenerate: () => regenerateMessage(index) }, entry.id)))] }) }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none z-[5]" }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 pointer-events-none z-[15]", children: _jsx("div", { className: "mx-auto w-full max-w-3xl px-4 sm:px-6 relative", children: _jsx(AnimatePresence, { children: showScrollToBottom && (_jsxs(motion.button, { type: "button", className: "absolute right-0 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 pointer-events-auto", onClick: handleScrollToBottom, initial: { opacity: 0, y: 10, scale: 0.9 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 10, scale: 0.9 }, transition: { duration: 0.2 }, children: [_jsx("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "currentColor", children: _jsx("path", { d: "M12 16l-6-6h12z" }) }), "Jump to latest"] })) }) }) }), _jsx("div", { className: "pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6", children: _jsx(ChatComposer, { loading: loading, error: error, onSend: handleSend, onClearError: () => setError(null), onError: (message) => setError(message) }) })] })] }), _jsx(PanelConfigurator, { open: configOpen, onClose: () => setConfigOpen(false), panelists: panelists, onPanelistChange: handlePanelistChange, onAddPanelist: handleAddPanelist, onRemovePanelist: handleRemovePanelist, providerKeys: providerKeys, onProviderKeyChange: handleProviderKeyChange, providerModels: providerModels, modelStatus: modelStatus, onFetchModels: handleFetchProviderModels, maxPanelists: MAX_PANELISTS, onLoadPreset: handleLoadPreset }), _jsx(AnimatePresence, { children: showKeyboardShortcuts && (_jsx(motion.div, { className: "fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm p-4", initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, onClick: () => setShowKeyboardShortcuts(false), children: _jsxs(motion.div, { className: "bg-background text-foreground rounded-2xl shadow-2xl max-w-md w-full p-6 border border-border", initial: { scale: 0.9, opacity: 0 }, animate: { scale: 1, opacity: 1 }, exit: { scale: 0.9, opacity: 0 }, transition: { type: "spring", stiffness: 300, damping: 30 }, onClick: (e) => e.stopPropagation(), children: [_jsxs("div", { className: "flex items-center justify-between mb-6", children: [_jsx("h2", { className: "text-xl font-semibold m-0", children: "Keyboard Shortcuts" }), _jsx("button", { type: "button", onClick: () => setShowKeyboardShortcuts(false), className: "rounded-lg w-8 h-8 border border-border flex items-center justify-center hover:bg-muted transition-colors text-lg", "aria-label": "Close", children: "\u00D7" })] }), _jsxs("div", { className: "space-y-4", children: [_jsxs("div", { className: "flex items-center justify-between py-2 border-b border-border/40", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "New thread" }), _jsxs("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: [navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl', " + N"] })] }), _jsxs("div", { className: "flex items-center justify-between py-2 border-b border-border/40", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "Toggle settings" }), _jsxs("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: [navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl', " + /"] })] }), _jsxs("div", { className: "flex items-center justify-between py-2 border-b border-border/40", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "Submit message" }), _jsxs("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: [navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl', " + Enter"] })] }), _jsxs("div", { className: "flex items-center justify-between py-2", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "Close modals" }), _jsx("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: "Esc" })] })] }), _jsx("div", { className: "mt-6 pt-4 border-t border-border/40", children: _jsxs("p", { className: "text-xs text-muted-foreground text-center", children: ["Press ", _jsx("kbd", { className: "px-1.5 py-0.5 text-xs font-semibold bg-muted rounded border border-border", children: "?" }), " anytime to show this help"] }) })] }) })) })] }));
+                                        : "border-border/20 bg-muted/20 opacity-50 hover:opacity-70"}`, title: summary.enabled ? "Click to disable" : "Click to enable", children: [_jsx("span", { className: `font-semibold text-[12px] ${summary.enabled ? "text-foreground" : "text-muted-foreground"}`, children: summary.name }), _jsxs("span", { className: "text-muted-foreground text-[11px]", children: ["\u00B7 ", summary.provider, summary.model ? ` · ${summary.model}` : ""] }), summary.enabled && (_jsx("svg", { viewBox: "0 0 24 24", className: "w-3 h-3 text-accent", fill: "currentColor", children: _jsx("circle", { cx: "12", cy: "12", r: "4" }) }))] }, summary.id))) })] }), _jsxs("section", { className: "flex flex-1 min-h-0 flex-col relative", children: [_jsx("div", { className: "flex-1 overflow-y-auto scroll-smooth", ref: messageListRef, children: _jsxs("div", { className: "flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6", children: [messages.length === 0 && (_jsx("div", { className: "flex-1 flex items-center justify-center", children: _jsx("p", { className: "text-muted-foreground/60 text-center text-sm", children: "Start a conversation by asking a question below." }) })), messages.map((entry, index) => (_jsx(MessageBubble, { entry: entry, onToggle: () => toggleEntry(index), isLatest: index === messages.length - 1, messageRef: index === messages.length - 1 ? latestMessageRef : undefined, loadingStatus: loadingStatus, onCopy: copyToClipboard, onDelete: () => deleteMessage(index), onRegenerate: () => openRegenerateModal(index), onContinueDebate: () => handleContinueDebate(entry.id) }, entry.id)))] }) }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background via-background/80 to-transparent pointer-events-none z-[5]" }), _jsx("div", { className: "absolute bottom-0 left-0 right-0 pointer-events-none z-[15]", children: _jsx("div", { className: "mx-auto w-full max-w-3xl px-4 sm:px-6 relative", children: _jsx(AnimatePresence, { children: showScrollToBottom && (_jsxs(motion.button, { type: "button", className: "absolute right-0 bottom-[210px] md:bottom-[220px] rounded-full bg-foreground/90 text-background pl-4 pr-5 py-2.5 shadow-lg text-[13px] font-medium hover:bg-foreground transition-all backdrop-blur-sm flex items-center gap-2 pointer-events-auto", onClick: handleScrollToBottom, initial: { opacity: 0, y: 10, scale: 0.9 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 10, scale: 0.9 }, transition: { duration: 0.2 }, children: [_jsx("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "currentColor", children: _jsx("path", { d: "M12 16l-6-6h12z" }) }), "Jump to latest"] })) }) }) }), _jsx("div", { className: "pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6", children: _jsx(ChatComposer, { loading: loading, error: error, onSend: handleSend, onStop: stopGeneration, onClearError: () => setError(null), onError: (message) => setError(message) }) })] })] }), _jsx(PanelConfigurator, { open: configOpen, onClose: () => setConfigOpen(false), panelists: panelists, onPanelistChange: handlePanelistChange, onAddPanelist: handleAddPanelist, onRemovePanelist: handleRemovePanelist, providerKeys: providerKeys, onProviderKeyChange: handleProviderKeyChange, providerModels: providerModels, modelStatus: modelStatus, onFetchModels: handleFetchProviderModels, maxPanelists: MAX_PANELISTS, onLoadPreset: handleLoadPreset, debateMode: debateMode, onDebateModeChange: setDebateMode, maxDebateRounds: maxDebateRounds, onMaxDebateRoundsChange: setMaxDebateRounds, stepReview: stepReview, onStepReviewChange: setStepReview }), _jsx(RegenerateModal, { open: regenerateModalOpen, onClose: () => {
+                    setRegenerateModalOpen(false);
+                    setRegenerateIndex(null);
+                }, onConfirm: confirmRegenerate, defaultDebateMode: regenerateIndex !== null
+                    ? conversations[threadId]?.[regenerateIndex]?.debate_mode ?? debateMode
+                    : debateMode, defaultMaxRounds: regenerateIndex !== null
+                    ? conversations[threadId]?.[regenerateIndex]?.max_debate_rounds ?? maxDebateRounds
+                    : maxDebateRounds, defaultStepReview: regenerateIndex !== null
+                    ? conversations[threadId]?.[regenerateIndex]?.step_review ?? stepReview
+                    : stepReview }), _jsx(AnimatePresence, { children: showKeyboardShortcuts && (_jsx(motion.div, { className: "fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm p-4", initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, onClick: () => setShowKeyboardShortcuts(false), children: _jsxs(motion.div, { className: "bg-background text-foreground rounded-2xl shadow-2xl max-w-md w-full p-6 border border-border", initial: { scale: 0.9, opacity: 0 }, animate: { scale: 1, opacity: 1 }, exit: { scale: 0.9, opacity: 0 }, transition: { type: "spring", stiffness: 300, damping: 30 }, onClick: (e) => e.stopPropagation(), children: [_jsxs("div", { className: "flex items-center justify-between mb-6", children: [_jsx("h2", { className: "text-xl font-semibold m-0", children: "Keyboard Shortcuts" }), _jsx("button", { type: "button", onClick: () => setShowKeyboardShortcuts(false), className: "rounded-lg w-8 h-8 border border-border flex items-center justify-center hover:bg-muted transition-colors text-lg", "aria-label": "Close", children: "\u00D7" })] }), _jsxs("div", { className: "space-y-4", children: [_jsxs("div", { className: "flex items-center justify-between py-2 border-b border-border/40", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "New thread" }), _jsxs("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: [navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl', " + N"] })] }), _jsxs("div", { className: "flex items-center justify-between py-2 border-b border-border/40", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "Toggle settings" }), _jsxs("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: [navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl', " + /"] })] }), _jsxs("div", { className: "flex items-center justify-between py-2 border-b border-border/40", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "Submit message" }), _jsxs("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: [navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? '⌘' : 'Ctrl', " + Enter"] })] }), _jsxs("div", { className: "flex items-center justify-between py-2", children: [_jsx("span", { className: "text-sm text-muted-foreground", children: "Close modals" }), _jsx("kbd", { className: "px-2 py-1 text-xs font-semibold bg-muted rounded border border-border", children: "Esc" })] })] }), _jsx("div", { className: "mt-6 pt-4 border-t border-border/40", children: _jsxs("p", { className: "text-xs text-muted-foreground text-center", children: ["Press ", _jsx("kbd", { className: "px-1.5 py-0.5 text-xs font-semibold bg-muted rounded border border-border", children: "?" }), " anytime to show this help"] }) })] }) })) })] }));
 }
-function ChatComposer({ loading, error, onSend, onClearError, onError }) {
+function ChatComposer({ loading, error, onSend, onStop, onClearError, onError }) {
     const [question, setQuestion] = useState("");
     const [attachments, setAttachments] = useState([]);
     const fileInputRef = useRef(null);
     const textareaRef = useRef(null);
     const hasContent = Boolean(question.trim()) || attachments.length > 0;
     const canSubmit = hasContent && !loading;
+    const canStop = loading;
     // Auto-resize textarea based on content
     useEffect(() => {
         const textarea = textareaRef.current;
@@ -763,10 +960,12 @@ function ChatComposer({ loading, error, onSend, onClearError, onError }) {
                             }, placeholder: "Send a message...", rows: 1, className: "w-full border-none rounded-2xl px-4 md:px-5 pt-3.5 md:pt-4 pb-14 md:pb-16 text-sm md:text-[15px] font-inherit resize-none overflow-y-hidden bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed" }), _jsx("div", { className: "absolute left-0 right-0 bottom-0 pt-3 px-4 md:px-5 pb-3.5 md:pb-4 bg-gradient-to-t from-background/95 via-background/80 to-transparent border-t border-border/20 rounded-b-2xl", children: _jsxs("div", { className: "flex items-center gap-2 md:gap-2.5", children: [_jsxs("button", { type: "button", className: "inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border/50 bg-background/90 text-foreground text-xs font-medium cursor-pointer hover:bg-muted/60 hover:border-border transition-all shadow-sm", onClick: () => fileInputRef.current?.click(), children: [_jsx("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", className: "w-3.5 h-3.5", children: _jsx("path", { fill: "currentColor", d: "M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z" }) }), _jsx("span", { className: "hidden sm:inline", children: "Attach" })] }), _jsx("input", { ref: fileInputRef, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: (event) => {
                                             handleFilesSelected(event.target.files);
                                             event.target.value = "";
-                                        } }), _jsx(motion.button, { type: "submit", className: "ml-auto w-10 h-10 md:w-11 md:h-11 rounded-xl inline-flex items-center justify-center bg-accent text-accent-foreground border-none cursor-pointer hover:opacity-90 transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed", disabled: !canSubmit, "aria-label": "Send message", whileHover: { scale: canSubmit ? 1.05 : 1 }, whileTap: { scale: canSubmit ? 0.95 : 1 }, animate: {
-                                            opacity: hasContent ? 1 : 0.3,
-                                            scale: hasContent ? 1 : 0.9
-                                        }, transition: { duration: 0.2 }, children: loading ? (_jsxs("svg", { className: "w-5 h-5 animate-spin", viewBox: "0 0 24 24", fill: "none", children: [_jsx("circle", { className: "opacity-25", cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "3" }), _jsx("path", { className: "opacity-75", fill: "currentColor", d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" })] })) : (_jsx("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", className: "w-5 h-5", children: _jsx("path", { fill: "currentColor", d: "M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" }) })) })] }) })] }), _jsx(AnimatePresence, { children: attachments.length > 0 && (_jsx(motion.div, { className: "flex flex-wrap gap-2.5", initial: { opacity: 0, height: 0 }, animate: { opacity: 1, height: "auto" }, exit: { opacity: 0, height: 0 }, children: attachments.map((src, index) => (_jsxs(motion.div, { className: "relative w-20 h-20 rounded-xl overflow-hidden border-2 border-border/40 shadow-sm group", initial: { opacity: 0, scale: 0.8 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: 0.8 }, transition: { duration: 0.2, delay: index * 0.03 }, children: [_jsx("img", { src: src, alt: `preview-${index + 1}`, className: "w-full h-full object-cover" }), _jsx("button", { type: "button", onClick: () => {
+                                        } }), _jsx(motion.button, { type: canStop ? "button" : "submit", onClick: canStop ? (e) => { e.preventDefault(); onStop(); } : undefined, className: `ml-auto w-10 h-10 md:w-11 md:h-11 rounded-xl inline-flex items-center justify-center border-none cursor-pointer transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${canStop
+                                            ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                                            : 'bg-accent text-accent-foreground hover:opacity-90'}`, disabled: !canSubmit && !canStop, "aria-label": canStop ? "Stop generation" : "Send message", whileHover: { scale: (canSubmit || canStop) ? 1.05 : 1 }, whileTap: { scale: (canSubmit || canStop) ? 0.95 : 1 }, animate: {
+                                            opacity: (hasContent || canStop) ? 1 : 0.3,
+                                            scale: (hasContent || canStop) ? 1 : 0.9
+                                        }, transition: { duration: 0.2 }, children: canStop ? (_jsx("svg", { viewBox: "0 0 24 24", className: "w-5 h-5", fill: "currentColor", children: _jsx("rect", { x: "6", y: "6", width: "12", height: "12", rx: "1" }) })) : (_jsx("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", className: "w-5 h-5", children: _jsx("path", { fill: "currentColor", d: "M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" }) })) })] }) })] }), _jsx(AnimatePresence, { children: attachments.length > 0 && (_jsx(motion.div, { className: "flex flex-wrap gap-2.5", initial: { opacity: 0, height: 0 }, animate: { opacity: 1, height: "auto" }, exit: { opacity: 0, height: 0 }, children: attachments.map((src, index) => (_jsxs(motion.div, { className: "relative w-20 h-20 rounded-xl overflow-hidden border-2 border-border/40 shadow-sm group", initial: { opacity: 0, scale: 0.8 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: 0.8 }, transition: { duration: 0.2, delay: index * 0.03 }, children: [_jsx("img", { src: src, alt: `preview-${index + 1}`, className: "w-full h-full object-cover" }), _jsx("button", { type: "button", onClick: () => {
                                         removeAttachment(index);
                                         if (error)
                                             onClearError();

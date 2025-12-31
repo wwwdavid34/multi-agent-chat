@@ -41,6 +41,10 @@ class AskRequest(BaseModel):
     attachments: list[str] | None = None
     panelists: list[PanelistConfig] | None = None
     provider_keys: dict[str, str] | None = None
+    debate_mode: bool | None = False
+    max_debate_rounds: int | None = 3
+    step_review: bool | None = False
+    continue_debate: bool | None = False  # Whether this is continuing a paused debate
 
 
 class AskResponse(BaseModel):
@@ -76,6 +80,11 @@ async def ask(req: AskRequest) -> AskResponse:
         "messages": [HumanMessage(content=question_text)],
         "panel_responses": {},
         "summary": None,
+        "debate_mode": req.debate_mode or False,
+        "max_debate_rounds": req.max_debate_rounds or 3,
+        "debate_round": 0,
+        "consensus_reached": False,
+        "debate_history": [],
     }
 
     config = {
@@ -111,13 +120,25 @@ async def ask_stream(req: AskRequest):
         if attachment_md:
             question_text = f"{question_text}\n\nAttached images:\n{attachment_md}"
 
-        state = {
-            "messages": [HumanMessage(content=question_text)],
-            "panel_responses": {},
-            "summary": None,
-            "search_results": None,
-            "needs_search": False,
-        }
+        # If continuing a debate, don't create new state - resume from checkpoint
+        if req.continue_debate:
+            state = None  # Will resume from checkpoint
+            logger.info(f"Continuing debate for thread {req.thread_id}")
+        else:
+            state = {
+                "messages": [HumanMessage(content=question_text)],
+                "panel_responses": {},
+                "summary": None,
+                "search_results": None,
+                "needs_search": False,
+                "debate_mode": req.debate_mode or False,
+                "max_debate_rounds": req.max_debate_rounds or 3,
+                "debate_round": 0,
+                "consensus_reached": False,
+                "debate_history": [],
+                "step_review": req.step_review or False,
+                "debate_paused": False,
+            }
 
         config = {
             "configurable": {
@@ -135,6 +156,7 @@ async def ask_stream(req: AskRequest):
             "moderator_search_decision": "Moderator is analyzing the question...",
             "search": "Searching the web...",
             "panelists": "Panel is discussing...",
+            "consensus_checker": "Evaluating consensus...",
             "moderator": "Moderating the discussion...",
         }
 
@@ -143,6 +165,8 @@ async def ask_stream(req: AskRequest):
             accumulated_state = {
                 "panel_responses": {},
                 "summary": None,
+                "debate_history": [],
+                "debate_paused": False,
             }
 
             # Stream events from the graph
@@ -161,8 +185,35 @@ async def ask_stream(req: AskRequest):
                     if node_name == "moderator" and "summary" in node_output:
                         accumulated_state["summary"] = node_output["summary"]
 
+                    # Track if debate is paused for user review
+                    if node_name == "pause_for_review":
+                        accumulated_state["debate_paused"] = node_output.get("debate_paused", False)
+                        logger.info("Debate paused - waiting for user to continue")
+
+                    # Emit debate round events when consensus_checker completes
+                    if node_name == "consensus_checker" and "debate_history" in node_output:
+                        accumulated_state["debate_history"] = node_output["debate_history"]
+                        # Send the latest debate round to the frontend
+                        if node_output["debate_history"]:
+                            latest_round = node_output["debate_history"][-1]
+                            debate_round_event = {
+                                "type": "debate_round",
+                                "round": latest_round,
+                            }
+                            yield f"data: {json.dumps(debate_round_event)}\n\n"
+
             # Send the complete result with accumulated state
-            if accumulated_state["summary"]:
+            # If debate is paused, send partial result without summary
+            if accumulated_state["debate_paused"]:
+                result_data = {
+                    "type": "debate_paused",
+                    "thread_id": req.thread_id,
+                    "panel_responses": accumulated_state["panel_responses"],
+                    "debate_history": accumulated_state["debate_history"],
+                    "debate_paused": True,
+                }
+                yield f"data: {json.dumps(result_data)}\n\n"
+            elif accumulated_state["summary"]:
                 # Check if the summary indicates an error condition
                 summary_lower = accumulated_state["summary"].lower()
                 is_error_response = any(
@@ -181,12 +232,14 @@ async def ask_stream(req: AskRequest):
                     error_data = {"type": "error", "message": accumulated_state["summary"]}
                     yield f"data: {json.dumps(error_data)}\n\n"
                 else:
-                    # Normal result
+                    # Normal result - debate complete
                     result_data = {
                         "type": "result",
                         "thread_id": req.thread_id,
                         "summary": accumulated_state["summary"],
                         "panel_responses": accumulated_state["panel_responses"],
+                        "debate_history": accumulated_state["debate_history"],
+                        "debate_paused": False,
                     }
                     yield f"data: {json.dumps(result_data)}\n\n"
 

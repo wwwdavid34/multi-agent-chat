@@ -6,9 +6,16 @@ interface MarkdownProps {
 }
 
 export function Markdown({ content }: MarkdownProps) {
+  // Handle empty or undefined content
+  const safeContent = content?.trim() || "";
+
+  if (!safeContent) {
+    return <div className="markdown text-muted-foreground italic">No content</div>;
+  }
+
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{safeContent}</ReactMarkdown>
     </div>
   );
 }
