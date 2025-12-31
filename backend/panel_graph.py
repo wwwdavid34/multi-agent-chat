@@ -1002,18 +1002,15 @@ def build_panel_graph():
     else:
         global _postgres_cm
         try:
-            # Import async PostgreSQL checkpointer for proper async support
-            try:
-                from langgraph_checkpoint_postgres import AsyncPostgresSaver
-            except ModuleNotFoundError:
-                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            # Import async PostgreSQL checkpointer
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
             pg_url = get_pg_conn_str()
 
-            # Create async checkpointer with persistent connection
-            # from_conn_string returns a context manager - we need to keep it alive
-            _postgres_cm = AsyncPostgresSaver.from_conn_string(pg_url)
-            checkpointer = _postgres_cm.__enter__()
+            # Create async checkpointer
+            # Note: from_conn_string creates the checkpointer; we don't need to enter the context
+            # manager here - LangGraph will handle the connection lifecycle
+            checkpointer = AsyncPostgresSaver.from_conn_string(pg_url)
 
             _actual_storage_mode = "postgres"
             logger.info("Using PostgreSQL storage (persistent) with async support")
