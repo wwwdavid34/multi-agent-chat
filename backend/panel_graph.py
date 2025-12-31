@@ -1005,28 +1005,48 @@ def build_panel_graph():
             # Import async PostgreSQL checkpointer
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
             import asyncio
+            import threading
 
             pg_url = get_pg_conn_str()
 
             # Create async checkpointer by entering the async context manager
-            # We need to use asyncio to properly enter the async context
+            # Since we may be in a running event loop (uvicorn), we need to run this
+            # in a new event loop in a separate thread
             async def _setup_checkpointer():
                 cm = AsyncPostgresSaver.from_conn_string(pg_url)
                 return await cm.__aenter__()
 
-            # Run the async setup in a new event loop
-            try:
-                checkpointer = asyncio.run(_setup_checkpointer())
-            except RuntimeError:
-                # If there's already an event loop running, use it
-                loop = asyncio.get_event_loop()
-                checkpointer = loop.run_until_complete(_setup_checkpointer())
+            def _run_in_new_loop():
+                # Create a new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(_setup_checkpointer())
+                finally:
+                    loop.close()
 
-            # Store the checkpointer globally to prevent garbage collection
-            _postgres_cm = checkpointer
+            # Run in a thread to avoid "event loop already running" errors
+            result_container = []
+            def thread_target():
+                try:
+                    result_container.append(_run_in_new_loop())
+                except Exception as e:
+                    result_container.append(e)
 
-            _actual_storage_mode = "postgres"
-            logger.info("Using PostgreSQL storage (persistent) with async support")
+            thread = threading.Thread(target=thread_target)
+            thread.start()
+            thread.join()
+
+            if result_container and not isinstance(result_container[0], Exception):
+                checkpointer = result_container[0]
+                # Store the checkpointer globally to prevent garbage collection
+                _postgres_cm = checkpointer
+                _actual_storage_mode = "postgres"
+                logger.info("Using PostgreSQL storage (persistent) with async support")
+            else:
+                raise result_container[0] if result_container else RuntimeError("Failed to initialize checkpointer")
+
+
         except Exception as exc:  # pragma: no cover - fallback in local envs
             logger.warning("Falling back to in-memory checkpointer: %s", exc)
             checkpointer = MemorySaver()
