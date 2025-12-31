@@ -1004,13 +1004,26 @@ def build_panel_graph():
         try:
             # Import async PostgreSQL checkpointer
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            import asyncio
 
             pg_url = get_pg_conn_str()
 
-            # Create async checkpointer
-            # Note: from_conn_string creates the checkpointer; we don't need to enter the context
-            # manager here - LangGraph will handle the connection lifecycle
-            checkpointer = AsyncPostgresSaver.from_conn_string(pg_url)
+            # Create async checkpointer by entering the async context manager
+            # We need to use asyncio to properly enter the async context
+            async def _setup_checkpointer():
+                cm = AsyncPostgresSaver.from_conn_string(pg_url)
+                return await cm.__aenter__()
+
+            # Run the async setup in a new event loop
+            try:
+                checkpointer = asyncio.run(_setup_checkpointer())
+            except RuntimeError:
+                # If there's already an event loop running, use it
+                loop = asyncio.get_event_loop()
+                checkpointer = loop.run_until_complete(_setup_checkpointer())
+
+            # Store the checkpointer globally to prevent garbage collection
+            _postgres_cm = checkpointer
 
             _actual_storage_mode = "postgres"
             logger.info("Using PostgreSQL storage (persistent) with async support")
