@@ -177,6 +177,38 @@ def _message_content_as_text(message: BaseMessage) -> str:
     return str(content)
 
 
+def _normalize_message_content(message: BaseMessage) -> BaseMessage:
+    """
+    Normalize message content to ensure compatibility with LLM APIs.
+
+    Fixes issues where checkpoint deserialization creates invalid content formats
+    (e.g., array with raw strings instead of objects).
+    """
+    content = message.content
+
+    # If content is already a string, it's valid
+    if isinstance(content, str):
+        return message
+
+    # If content is a list, ensure all elements are properly formatted
+    if isinstance(content, list):
+        # Check if any element is a raw string (invalid format)
+        has_raw_strings = any(isinstance(item, str) for item in content)
+
+        if has_raw_strings:
+            # Convert to plain text string
+            normalized_content = _message_content_as_text(message)
+            # Create new message with normalized content
+            if isinstance(message, HumanMessage):
+                return HumanMessage(content=normalized_content)
+            elif isinstance(message, AIMessage):
+                return AIMessage(content=normalized_content)
+            elif isinstance(message, SystemMessage):
+                return SystemMessage(content=normalized_content)
+
+    return message
+
+
 def _extract_grok_content(payload: Dict[str, Any]) -> str:
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -345,7 +377,11 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
     panel_configs = _resolve_panelists(config)
     provider_keys = _resolve_provider_keys(config)
     panel_responses = dict(state.get("panel_responses", {}))
-    history: List[AnyMessage] = list(state.get("messages", []))
+
+    # Normalize message content when loading from checkpoint to fix format issues
+    raw_messages = list(state.get("messages", []))
+    history: List[AnyMessage] = [_normalize_message_content(msg) for msg in raw_messages]
+
     summary = state.get("conversation_summary", "")
     if summary:
         history = [SystemMessage(content=f"Previous conversation summary: {summary}")] + history
@@ -427,7 +463,10 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
 async def moderator_search_decision(state: PanelState) -> Dict[str, Any]:
     """Moderator evaluates if web search is needed to answer the question."""
 
-    messages = state.get("messages", [])
+    # Normalize message content when loading from checkpoint
+    raw_messages = list(state.get("messages", []))
+    messages = [_normalize_message_content(msg) for msg in raw_messages]
+
     if not messages:
         return {"search_results": None, "needs_search": False}
 
@@ -486,7 +525,10 @@ Examples:
 async def search_node(state: PanelState) -> Dict[str, Any]:
     """Perform web search - only called when moderator decides it's needed."""
 
-    messages = state.get("messages", [])
+    # Normalize message content when loading from checkpoint
+    raw_messages = list(state.get("messages", []))
+    messages = [_normalize_message_content(msg) for msg in raw_messages]
+
     user_messages = [m for m in messages if isinstance(m, HumanMessage)]
     if not user_messages:
         return {"search_results": None}
@@ -542,7 +584,10 @@ async def search_node(state: PanelState) -> Dict[str, Any]:
 
 def moderator_node(state: PanelState) -> Dict[str, object]:
     panel_responses = state.get("panel_responses", {})
-    messages = state.get("messages", [])
+
+    # Normalize message content when loading from checkpoint to fix format issues
+    raw_messages = list(state.get("messages", []))
+    messages = [_normalize_message_content(msg) for msg in raw_messages]
 
     panel_text = "\n\n".join(
         f"{name}:\n{resp}" for name, resp in panel_responses.items()
@@ -723,12 +768,15 @@ def pause_for_review(state: PanelState) -> Dict[str, Any]:
 
 def summarize_conversation(state: PanelState) -> Dict[str, Any]:
     summary = state.get("conversation_summary", "")
-    messages = state.get("messages", [])
-    
+
+    # Normalize message content when loading from checkpoint
+    raw_messages = list(state.get("messages", []))
+    messages = [_normalize_message_content(msg) for msg in raw_messages]
+
     # Keep last 4 messages
     if len(messages) <= 4:
         return {}
-        
+
     to_summarize = messages[:-4]
     
     # Generate summary
