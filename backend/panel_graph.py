@@ -184,6 +184,33 @@ def _normalize_message_content(message: BaseMessage) -> BaseMessage:
     Fixes issues where checkpoint deserialization creates invalid content formats
     (e.g., array with raw strings instead of objects).
     """
+    def _copy_with_content(original: BaseMessage, normalized: str) -> BaseMessage:
+        # Prefer Pydantic copy/model_copy to preserve IDs and metadata.
+        if hasattr(original, "model_copy"):
+            try:
+                return original.model_copy(update={"content": normalized})
+            except TypeError:
+                pass
+        if hasattr(original, "copy"):
+            try:
+                return original.copy(update={"content": normalized})
+            except TypeError:
+                pass
+
+        # Fallback: rebuild and preserve message id when possible.
+        message_id = getattr(original, "id", None)
+        cls = type(original)
+        try:
+            return cls(content=normalized, id=message_id)
+        except TypeError:
+            rebuilt = cls(content=normalized)
+            if message_id is not None:
+                try:
+                    setattr(rebuilt, "id", message_id)
+                except Exception:
+                    pass
+            return rebuilt
+
     content = message.content
 
     # If content is already a string, it's valid
@@ -198,13 +225,7 @@ def _normalize_message_content(message: BaseMessage) -> BaseMessage:
         if has_raw_strings:
             # Convert to plain text string
             normalized_content = _message_content_as_text(message)
-            # Create new message with normalized content
-            if isinstance(message, HumanMessage):
-                return HumanMessage(content=normalized_content)
-            elif isinstance(message, AIMessage):
-                return AIMessage(content=normalized_content)
-            elif isinstance(message, SystemMessage):
-                return SystemMessage(content=normalized_content)
+            return _copy_with_content(message, normalized_content)
 
     return message
 

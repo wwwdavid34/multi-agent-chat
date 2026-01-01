@@ -160,9 +160,20 @@ async def ask_stream(req: AskRequest, request: Request):
             "panelists": "Panel is discussing...",
             "consensus_checker": "Evaluating consensus...",
             "moderator": "Moderating the discussion...",
+            "pause_for_review": "Paused for your review...",
         }
 
         try:
+            if req.continue_debate:
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Continuing debate...'})}\n\n"
+            else:
+                max_rounds = req.max_debate_rounds or 3
+                if req.debate_mode:
+                    suffix = " (step review)" if req.step_review else ""
+                    yield f"data: {json.dumps({'type': 'status', 'message': f'Starting debate (max {max_rounds} rounds){suffix}...'})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting panel...'})}\n\n"
+
             # Track accumulated state across node executions
             accumulated_state = {
                 "panel_responses": {},

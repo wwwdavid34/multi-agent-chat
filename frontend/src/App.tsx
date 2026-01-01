@@ -72,6 +72,8 @@ const MessageBubble = memo(function MessageBubble({
   isLatest = false,
   messageRef,
   loadingStatus = "Panel is thinking...",
+  status,
+  statusTrail,
   onCopy,
   onDelete,
   onRegenerate,
@@ -82,6 +84,8 @@ const MessageBubble = memo(function MessageBubble({
   isLatest?: boolean;
   messageRef?: React.RefObject<HTMLDivElement>;
   loadingStatus?: string;
+  status?: string;
+  statusTrail?: string[];
   onCopy?: (text: string) => void;
   onDelete?: () => void;
   onRegenerate?: () => void;
@@ -423,8 +427,13 @@ const MessageBubble = memo(function MessageBubble({
                     transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
                   />
                 </motion.div>
-                <span className={`text-[13px] ${entry.debate_mode ? 'text-accent/70' : 'text-muted-foreground/60'}`}>{loadingStatus}</span>
+                <span className={`text-[13px] ${entry.debate_mode ? 'text-accent/70' : 'text-muted-foreground/60'}`}>{status ?? loadingStatus}</span>
               </div>
+              {statusTrail && statusTrail.length > 1 && (
+                <div className="text-[11px] text-muted-foreground/50 pl-7">
+                  {statusTrail.slice(-3).join(" · ")}
+                </div>
+              )}
             </div>
           )}
         </motion.div>
@@ -482,6 +491,9 @@ export default function App() {
   const [regenerateIndex, setRegenerateIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState<string>("Panel is thinking...");
+  const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
+  const [statusByEntryId, setStatusByEntryId] = useState<Record<string, string>>({});
+  const [statusTrailByEntryId, setStatusTrailByEntryId] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -513,6 +525,34 @@ export default function App() {
   const latestMessageRef = useRef<HTMLDivElement>(null);
 
   const messages = conversations[threadId] ?? [];
+
+  const setEntryStatus = useCallback((entryId: string, message: string) => {
+    setStatusByEntryId((prev) => (prev[entryId] === message ? prev : { ...prev, [entryId]: message }));
+    setStatusTrailByEntryId((prev) => {
+      const existing = prev[entryId] ?? [];
+      const next = existing[existing.length - 1] === message ? existing : [...existing, message];
+      const trimmed = next.length > 6 ? next.slice(next.length - 6) : next;
+      return { ...prev, [entryId]: trimmed };
+    });
+  }, []);
+
+  const clearEntryStatus = useCallback((entryId: string) => {
+    setStatusByEntryId((prev) => {
+      if (!(entryId in prev)) return prev;
+      const { [entryId]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setStatusTrailByEntryId((prev) => {
+      if (!(entryId in prev)) return prev;
+      const { [entryId]: _removed, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+
+  const activeEntry = useMemo(() => {
+    if (!activeEntryId) return null;
+    return messages.find((entry) => entry.id === activeEntryId) ?? null;
+  }, [activeEntryId, messages]);
 
   // Auto-scroll to latest message when messages change
   useEffect(() => {
@@ -787,6 +827,8 @@ export default function App() {
 
       const sanitizedQuestion = question.trim() || "See attached images.";
       const entryId = `${threadId}-${Date.now()}`;
+      setActiveEntryId(entryId);
+      setEntryStatus(entryId, "Starting...");
 
       const useDebateMode = customDebateMode ?? DEFAULT_DEBATE_MODE;
       const useMaxRounds = customMaxRounds ?? DEFAULT_MAX_DEBATE_ROUNDS;
@@ -827,8 +869,10 @@ export default function App() {
           {
             onStatus: (message) => {
               setLoadingStatus(message);
+              setEntryStatus(entryId, message);
             },
             onDebateRound: (round) => {
+              setEntryStatus(entryId, `Round ${round.round_number + 1} complete`);
               // Update the entry with the new debate round in real-time
               setConversations((prev) => ({
                 ...prev,
@@ -843,6 +887,7 @@ export default function App() {
               }));
             },
             onDebatePaused: (result) => {
+              setEntryStatus(entryId, "Paused for review");
               // Debate paused for user review
               setConversations((prev) => ({
                 ...prev,
@@ -860,8 +905,10 @@ export default function App() {
               // Clear loading state when debate pauses
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
+              setActiveEntryId(null);
             },
             onResult: (result) => {
+              clearEntryStatus(entryId);
               // Update the entry with the actual response
               setConversations((prev) => ({
                 ...prev,
@@ -881,6 +928,7 @@ export default function App() {
               // Clear loading state when response is complete
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
+              setActiveEntryId(null);
             },
             onError: (err) => {
               // Remove the optimistic entry on error
@@ -891,6 +939,8 @@ export default function App() {
               setError(err.message);
               setLoading(false);
               setLoadingStatus("Panel is thinking..."); // Reset status
+              setActiveEntryId(null);
+              clearEntryStatus(entryId);
             },
           },
           controller.signal
@@ -915,6 +965,8 @@ export default function App() {
           // Reset loading state
           setLoading(false);
           setLoadingStatus("Panel is thinking...");
+          setActiveEntryId(null);
+          clearEntryStatus(entryId);
           return;
         }
 
@@ -929,9 +981,10 @@ export default function App() {
         setLoading(false);
         setLoadingStatus("Panel is thinking..."); // Reset status
         setAbortController(null); // Clean up abort controller
+        setActiveEntryId(null);
       }
     },
-    [loading, preparedPanelists, sanitizedProviderKeys, threadId]
+    [clearEntryStatus, loading, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
   );
 
   const handleContinueDebate = useCallback(
@@ -943,6 +996,8 @@ export default function App() {
 
       setLoading(true);
       setError(null);
+      setActiveEntryId(entryId);
+      setEntryStatus(entryId, "Continuing debate...");
 
       // Create abort controller for this request
       const controller = new AbortController();
@@ -961,8 +1016,10 @@ export default function App() {
           {
             onStatus: (message) => {
               setLoadingStatus(message);
+              setEntryStatus(entryId, message);
             },
             onDebateRound: (round) => {
+              setEntryStatus(entryId, `Round ${round.round_number + 1} complete`);
               // Add the new debate round
               setConversations((prev) => ({
                 ...prev,
@@ -977,6 +1034,7 @@ export default function App() {
               }));
             },
             onDebatePaused: (result) => {
+              setEntryStatus(entryId, "Paused for review");
               // Still paused - waiting for next round
               setConversations((prev) => ({
                 ...prev,
@@ -993,8 +1051,10 @@ export default function App() {
               // Clear loading state when debate pauses
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
+              setActiveEntryId(null);
             },
             onResult: (result) => {
+              clearEntryStatus(entryId);
               // Debate complete - got final summary
               setConversations((prev) => ({
                 ...prev,
@@ -1012,11 +1072,14 @@ export default function App() {
               // Clear loading state when response is complete
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
+              setActiveEntryId(null);
             },
             onError: (err) => {
               setError(err.message);
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
+              setActiveEntryId(null);
+              clearEntryStatus(entryId);
             },
           },
           controller.signal
@@ -1028,6 +1091,8 @@ export default function App() {
           // Reset loading state
           setLoading(false);
           setLoadingStatus("Panel is thinking...");
+          setActiveEntryId(null);
+          clearEntryStatus(entryId);
           return;
         }
         setError(err instanceof Error ? err.message : "Something went wrong");
@@ -1035,9 +1100,10 @@ export default function App() {
         setLoading(false);
         setLoadingStatus("Panel is thinking...");
         setAbortController(null); // Clean up abort controller
+        setActiveEntryId(null);
       }
     },
-    [conversations, threadId, preparedPanelists, sanitizedProviderKeys]
+    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
   );
 
   const stopGeneration = useCallback(() => {
@@ -1047,6 +1113,7 @@ export default function App() {
       setAbortController(null);
       setLoading(false);
       setLoadingStatus("Panel is thinking...");
+      setActiveEntryId(null);
     }
   }, [abortController]);
 
@@ -1802,7 +1869,7 @@ export default function App() {
         <section className="flex flex-1 min-h-0 flex-col relative">
             {/* Scrollable messages area */}
             <div className="flex-1 overflow-y-auto scroll-smooth" ref={messageListRef}>
-              <div className="flex flex-col gap-10 py-10 pb-8 mx-auto w-full max-w-3xl px-4 sm:px-6">
+              <div className="flex flex-col gap-10 py-10 pb-16 mx-auto w-full max-w-3xl px-4 sm:px-6">
                 {messages.length === 0 && (
                   <div className="flex-1 flex items-center justify-center">
                     <p className="text-muted-foreground/60 text-center text-sm">Start a conversation by asking a question below.</p>
@@ -1816,6 +1883,8 @@ export default function App() {
                     isLatest={index === messages.length - 1}
                     messageRef={index === messages.length - 1 ? latestMessageRef : undefined}
                     loadingStatus={loadingStatus}
+                    status={statusByEntryId[entry.id]}
+                    statusTrail={statusTrailByEntryId[entry.id]}
                     onCopy={copyToClipboard}
                     onDelete={() => deleteMessage(index)}
                     onRegenerate={() => openRegenerateModal(index)}
@@ -1853,7 +1922,35 @@ export default function App() {
             </div>
 
             {/* Fixed composer area at bottom */}
-            <div className="pt-8 pb-5 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6">
+            <div className="pt-4 pb-4 relative z-10 mx-auto w-full max-w-3xl px-4 sm:px-6">
+              {loading && (
+                <div className="mb-2 rounded-xl border border-border/50 bg-background/90 backdrop-blur-sm px-3 py-2 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex gap-1.5">
+                        <div className="w-2 h-2 rounded-full bg-accent/40 animate-pulse" />
+                        <div className="w-2 h-2 rounded-full bg-accent/40 animate-pulse [animation-delay:150ms]" />
+                        <div className="w-2 h-2 rounded-full bg-accent/40 animate-pulse [animation-delay:300ms]" />
+                      </div>
+                      <span className="text-sm text-muted-foreground truncate">
+                        {activeEntryId ? statusByEntryId[activeEntryId] ?? loadingStatus : loadingStatus}
+                      </span>
+                    </div>
+                    {activeEntry?.debate_mode && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground whitespace-nowrap">
+                        {activeEntry.step_review && (
+                          <span className="px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
+                            Step Review
+                          </span>
+                        )}
+                        <span>
+                          Round {(activeEntry.debate_history?.length ?? 0) + 1}/{activeEntry.max_debate_rounds ?? DEFAULT_MAX_DEBATE_ROUNDS}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               <ChatComposer
                 loading={loading}
                 error={error}
