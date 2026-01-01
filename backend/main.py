@@ -112,7 +112,7 @@ async def ask_stream(req: AskRequest, request: Request):
 
     async def event_stream() -> AsyncIterator[str]:
         """Generate Server-Sent Events for graph execution."""
-        logger.info(f"[EVENT_STREAM] Started for thread {req.thread_id}")
+        print(f"[EVENT_STREAM] Started for thread {req.thread_id}", flush=True)
 
         attachments = req.attachments or []
         attachment_md = "\n".join(
@@ -172,7 +172,7 @@ async def ask_stream(req: AskRequest, request: Request):
             }
 
             # Create stream and wrap iteration to allow cancellation during long-running nodes
-            logger.info(f"[STREAM] Starting graph stream for thread {req.thread_id}")
+            print(f"[STREAM] Starting graph stream for thread {req.thread_id}", flush=True)
             stream = panel_graph.astream(state, config=config)
 
             async def get_next_event(stream_iter):
@@ -187,7 +187,7 @@ async def ask_stream(req: AskRequest, request: Request):
 
             while True:
                 # Create task for getting next event
-                logger.info(f"[STREAM] Waiting for next graph event...")
+                print(f"[STREAM] Waiting for next graph event...", flush=True)
                 event_task = asyncio.create_task(get_next_event(stream_iter))
 
                 # Poll for disconnection while waiting for event (every 100ms)
@@ -195,28 +195,28 @@ async def ask_stream(req: AskRequest, request: Request):
                     poll_count += 1
                     is_disconnected = await request.is_disconnected()
 
-                    # Log every 10th poll to avoid spam but show progress
+                    # Log every 10th poll to show progress
                     if poll_count % 10 == 0:
-                        logger.info(f"[STREAM] Poll #{poll_count}: task_done={event_task.done()}, disconnected={is_disconnected}")
+                        print(f"[STREAM] Poll #{poll_count}: task_done={event_task.done()}, disconnected={is_disconnected}", flush=True)
 
                     if is_disconnected:
-                        logger.info(f"[ABORT] Client disconnected detected for thread {req.thread_id}")
-                        logger.info(f"[ABORT] Cancelling event_task...")
+                        print(f"[ABORT] Client disconnected detected for thread {req.thread_id}", flush=True)
+                        print(f"[ABORT] Cancelling event_task...", flush=True)
                         event_task.cancel()
                         try:
                             await event_task
-                            logger.info(f"[ABORT] event_task awaited successfully")
+                            print(f"[ABORT] event_task awaited successfully", flush=True)
                         except asyncio.CancelledError:
-                            logger.info(f"[ABORT] event_task raised CancelledError (expected)")
+                            print(f"[ABORT] event_task raised CancelledError (expected)", flush=True)
 
-                        logger.info(f"[ABORT] Closing stream...")
+                        print(f"[ABORT] Closing stream...", flush=True)
                         try:
                             await stream.aclose()
-                            logger.info(f"[ABORT] Stream closed successfully")
+                            print(f"[ABORT] Stream closed successfully", flush=True)
                         except Exception as e:
-                            logger.error(f"[ABORT] Error closing stream: {e}")
+                            print(f"[ABORT] Error closing stream: {e}", flush=True)
 
-                        logger.info(f"[ABORT] Returning from generator")
+                        print(f"[ABORT] Returning from generator", flush=True)
                         return
 
                     # Brief sleep to avoid busy-waiting
@@ -225,10 +225,10 @@ async def ask_stream(req: AskRequest, request: Request):
                 # Get the event result
                 event = await event_task
                 if event is None:
-                    logger.info(f"[STREAM] Stream ended (no more events)")
+                    print(f"[STREAM] Stream ended (no more events)", flush=True)
                     break  # Stream ended
 
-                logger.info(f"[STREAM] Got event with nodes: {list(event.keys())}")
+                print(f"[STREAM] Got event with nodes: {list(event.keys())}", flush=True)
 
                 for node_name, node_output in event.items():
 
@@ -304,17 +304,17 @@ async def ask_stream(req: AskRequest, request: Request):
                     yield f"data: {json.dumps(result_data)}\n\n"
 
             # Send completion event
-            logger.info(f"[EVENT_STREAM] Sending done event for thread {req.thread_id}")
+            print(f"[EVENT_STREAM] Sending done event for thread {req.thread_id}", flush=True)
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            logger.info(f"[EVENT_STREAM] Completed successfully for thread {req.thread_id}")
+            print(f"[EVENT_STREAM] Completed successfully for thread {req.thread_id}", flush=True)
 
         except asyncio.CancelledError:
-            logger.info(f"[EVENT_STREAM] CancelledError caught for thread {req.thread_id}")
+            print(f"[EVENT_STREAM] CancelledError caught for thread {req.thread_id}", flush=True)
             return
 
         except Exception as e:
             error_msg = str(e) or f"{type(e).__name__}: {repr(e)}"
-            logger.exception("[EVENT_STREAM] Error during streaming: %s", error_msg)
+            print(f"[EVENT_STREAM] Error: {error_msg}", flush=True)
             error_data = {"type": "error", "message": error_msg}
             yield f"data: {json.dumps(error_data)}\n\n"
 
