@@ -92,6 +92,14 @@ const MessageBubble = memo(function MessageBubble({
   onContinueDebate?: () => void;
 }) {
   const [viewMode, setViewMode] = React.useState<"list" | "grid">("list");
+  const displayStatus = status ?? loadingStatus;
+  const statusTrailText = (() => {
+    if (!statusTrail || statusTrail.length <= 1) return null;
+    const trimmed = statusTrail.slice(-6);
+    const withoutCurrent = trimmed[trimmed.length - 1] === displayStatus ? trimmed.slice(0, -1) : trimmed;
+    if (withoutCurrent.length === 0) return null;
+    return withoutCurrent.slice(-3).join(" · ");
+  })();
 
   return (
     <motion.article
@@ -427,11 +435,11 @@ const MessageBubble = memo(function MessageBubble({
                     transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
                   />
                 </motion.div>
-                <span className={`text-[13px] ${entry.debate_mode ? 'text-accent/70' : 'text-muted-foreground/60'}`}>{status ?? loadingStatus}</span>
+                <span className={`text-[13px] ${entry.debate_mode ? 'text-accent/70' : 'text-muted-foreground/60'}`}>{displayStatus}</span>
               </div>
-              {statusTrail && statusTrail.length > 1 && (
+              {statusTrailText && (
                 <div className="text-[11px] text-muted-foreground/50 pl-7">
-                  {statusTrail.slice(-3).join(" · ")}
+                  {statusTrailText}
                 </div>
               )}
             </div>

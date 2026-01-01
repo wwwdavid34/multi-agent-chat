@@ -398,6 +398,7 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
     panel_configs = _resolve_panelists(config)
     provider_keys = _resolve_provider_keys(config)
     panel_responses = dict(state.get("panel_responses", {}))
+    panelist_names = [p["name"] for p in panel_configs]
 
     # Normalize message content when loading from checkpoint to fix format issues
     raw_messages = list(state.get("messages", []))
@@ -417,57 +418,72 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
         history = [search_context] + history
         logger.info("Injected search results into panelist context")
 
-    # In debate mode (round > 0), inject other panelists' responses for debate context
     debate_mode = state.get("debate_mode", False)
     debate_round = state.get("debate_round", 0)
-
-    if debate_mode and debate_round > 0 and panel_responses:
-        panelist_names = list(panel_responses.keys())
-        if debate_round == 1:
-            # First debate round - establish clear positions
-            debate_context = SystemMessage(
-                content=f"=== DEBATE ROUND {debate_round} - TAKE A STANCE ===\n\n"
-                       f"You are participating in a panel debate with: {', '.join(panelist_names)}\n\n"
-                       f"CRITICAL INSTRUCTIONS FOR DEBATE MODE:\n"
-                       f"- DO NOT provide a balanced 'on one hand, on the other hand' response\n"
-                       f"- You MUST take a clear, specific position on the question\n"
-                       f"- Defend your position with strong arguments and evidence\n"
-                       f"- Review other panelists' responses below and identify where you DISAGREE\n"
-                       f"- Use @Name syntax to directly challenge other panelists (e.g., '@ChatGPT, I disagree because...')\n"
-                       f"- Be respectful but assertive - this is a debate, not a consensus exercise\n"
-                       f"- If you genuinely agree with another panelist, say so explicitly and build on their argument\n\n"
-                       f"Previous Round Responses:\n\n" +
-                       "\n\n".join(f"{name}:\n{resp}" for name, resp in panel_responses.items()) +
-                       f"\n\n{'='*50}\n\n"
-                       f"Now take a CLEAR STANCE for Round {debate_round}. Use @Name to challenge specific points:"
-            )
-        else:
-            # Subsequent rounds - refine position or concede
-            debate_context = SystemMessage(
-                content=f"=== DEBATE ROUND {debate_round} - DEFEND OR CONCEDE ===\n\n"
-                       f"You are continuing the debate with: {', '.join(panelist_names)}\n\n"
-                       f"INSTRUCTIONS:\n"
-                       f"- Review how other panelists responded to your arguments\n"
-                       f"- Either DEFEND your position with new evidence/reasoning, or CONCEDE if they made valid points\n"
-                       f"- Use @Name to respond to specific arguments (e.g., '@Claude, you raise a good point about X, but...')\n"
-                       f"- Look for weaknesses in opposing arguments and point them out\n"
-                       f"- If you're changing your position, clearly state what convinced you\n"
-                       f"- Only agree to consensus if you genuinely believe the positions have converged\n\n"
-                       f"Previous Round Responses:\n\n" +
-                       "\n\n".join(f"{name}:\n{resp}" for name, resp in panel_responses.items()) +
-                       f"\n\n{'='*50}\n\n"
-                       f"Round {debate_round} - Defend your position or explain what changed your mind:"
-            )
-        history = [debate_context] + history
-        logger.info(f"Injected debate context for round {debate_round}")
 
     new_messages: List[AnyMessage] = []
 
     runners = [_build_runner(p, provider_keys) for p in panel_configs]
 
+    def _personalize_history(panelist_name: str) -> List[AnyMessage]:
+        identity = SystemMessage(
+            content=(
+                f"YOU ARE: {panelist_name}\n"
+                f"Other panelists: {', '.join([n for n in panelist_names if n != panelist_name])}\n\n"
+                "Name & tagging rules:\n"
+                f"- Other panelists will address you as @{panelist_name}.\n"
+                f"- If you see '@{panelist_name}' anywhere in the conversation, treat it as directed at you and respond to the claim.\n"
+                "- When addressing others, use the exact @Name shown in the panelist list.\n"
+                "- If multiple people are tagged, only respond to points relevant to you.\n"
+            )
+        )
+
+        personalized: List[AnyMessage] = [identity]
+
+        if debate_mode and debate_round > 0 and panel_responses:
+            other_responses = "\n\n".join(
+                f"{name}:\n{resp}" for name, resp in panel_responses.items() if name != panelist_name
+            )
+            my_previous = panel_responses.get(panelist_name)
+            my_section = f"\n\nYour previous response:\n{my_previous}" if isinstance(my_previous, str) and my_previous.strip() else ""
+
+            if debate_round == 1:
+                debate_context = SystemMessage(
+                    content=(
+                        f"=== DEBATE ROUND {debate_round} - TAKE A STANCE ===\n\n"
+                        "CRITICAL INSTRUCTIONS FOR DEBATE MODE:\n"
+                        "- DO NOT provide a balanced 'on one hand, on the other hand' response.\n"
+                        "- You MUST take a clear, specific position.\n"
+                        "- Defend your position with strong arguments and evidence.\n"
+                        "- Explicitly challenge disagreements using @Name.\n"
+                        "- If you genuinely agree with another panelist, say so explicitly and build on it.\n\n"
+                        f"Other panelists' previous round responses:\n\n{other_responses}"
+                        f"{my_section}\n\n"
+                        f"Now write your Round {debate_round} response. Use @Name when replying to specific points."
+                    )
+                )
+            else:
+                debate_context = SystemMessage(
+                    content=(
+                        f"=== DEBATE ROUND {debate_round} - DEFEND OR CONCEDE ===\n\n"
+                        "INSTRUCTIONS:\n"
+                        "- Respond to arguments that address you (especially those tagging you).\n"
+                        "- Either DEFEND your position with new evidence/reasoning, or CONCEDE if others made valid points.\n"
+                        "- Use @Name to respond to specific arguments.\n"
+                        "- If you change your mind, clearly state what convinced you.\n\n"
+                        f"Other panelists' previous round responses:\n\n{other_responses}"
+                        f"{my_section}\n\n"
+                        f"Write your Round {debate_round} response."
+                    )
+                )
+            personalized.append(debate_context)
+
+        personalized.extend(history)
+        return personalized
+
     # Run all panelists in parallel with retry logic for context errors
     results = await asyncio.gather(
-        *(_invoke_with_retry(runner, history, panelist["name"])
+        *(_invoke_with_retry(runner, _personalize_history(panelist["name"]), panelist["name"])
           for runner, panelist in zip(runners, panel_configs))
     )
 
