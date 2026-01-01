@@ -39,6 +39,7 @@ interface MessageEntry {
   max_debate_rounds?: number; // Max rounds configured for this exchange
   step_review?: boolean; // Whether to show rounds step-by-step
   debate_paused?: boolean; // Whether debate is paused waiting for user to continue
+  stopped?: boolean; // Whether generation was stopped by user
 }
 
 const parseJSON = <T,>(value: string | null, fallback: T): T => {
@@ -148,7 +149,16 @@ const MessageBubble = memo(function MessageBubble({
           {/* Mode indicator badge */}
           {entry.summary && (
             <>
-              {entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (
+              {entry.stopped ? (
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 border border-border/40">
+                  <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                  </svg>
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Stopped
+                  </span>
+                </div>
+              ) : entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (
                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/30">
                   <svg viewBox="0 0 24 24" className="w-3 h-3 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -225,11 +235,20 @@ const MessageBubble = memo(function MessageBubble({
         >
           {entry.summary ? (
             <>
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <Markdown content={entry.summary} />
-              </div>
+              {entry.stopped ? (
+                <div className="flex items-center gap-2 text-muted-foreground py-2">
+                  <svg viewBox="0 0 24 24" className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                  </svg>
+                  <span className="text-sm italic">{entry.summary}</span>
+                </div>
+              ) : (
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <Markdown content={entry.summary} />
+                </div>
+              )}
 
-              {entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (
+              {!entry.stopped && entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (
                 <DebateViewer
                   debateHistory={entry.debate_history}
                   panelists={entry.panelists}
@@ -238,7 +257,7 @@ const MessageBubble = memo(function MessageBubble({
                   debatePaused={entry.debate_paused}
                   onContinue={onContinueDebate}
                 />
-              ) : (
+              ) : !entry.stopped ? (
                 <>
                 <div className="mt-5 flex items-center gap-3">
                   <button
@@ -354,7 +373,7 @@ const MessageBubble = memo(function MessageBubble({
                 )}
               </AnimatePresence>
                 </>
-              )}
+              ) : null}
             </>
           ) : (
             <div className="flex items-center gap-3">
@@ -839,10 +858,18 @@ export default function App() {
         // Don't show error if request was aborted by user, but still clean up
         if (err instanceof Error && err.name === 'AbortError') {
           console.log('Request aborted by user');
-          // Remove the optimistic entry when aborted
+          // Keep the entry but mark it as stopped
           setConversations((prev) => ({
             ...prev,
-            [threadId]: prev[threadId]?.filter((entry) => entry.id !== entryId) ?? [],
+            [threadId]: prev[threadId]?.map((entry) =>
+              entry.id === entryId
+                ? {
+                    ...entry,
+                    summary: "Generation stopped by user.",
+                    stopped: true,
+                  }
+                : entry
+            ) ?? [],
           }));
           // Reset loading state
           setLoading(false);
