@@ -376,30 +376,44 @@ const MessageBubble = memo(function MessageBubble({
               ) : null}
             </>
           ) : (
-            <div className="flex items-center gap-3">
-              <motion.div
-                className="flex gap-1.5"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.3 }}
-              >
+            <div className="flex flex-col gap-2">
+              {/* Debate mode indicator when loading */}
+              {entry.debate_mode && (
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/30 w-fit">
+                  <svg viewBox="0 0 24 24" className="w-3 h-3 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
+                  </svg>
+                  <span className="text-[10px] font-semibold text-accent uppercase tracking-wide">
+                    Debate Mode
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center gap-3">
                 <motion.div
-                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0 }}
-                />
-                <motion.div
-                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }}
-                />
-                <motion.div
-                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
-                />
-              </motion.div>
-              <span className="text-[13px] text-muted-foreground/60">{loadingStatus}</span>
+                  className={`flex gap-1.5 ${entry.debate_mode ? 'text-accent' : ''}`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <motion.div
+                    className={`w-2 h-2 rounded-full ${entry.debate_mode ? 'bg-accent/40' : 'bg-muted-foreground/40'}`}
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                    transition={{ duration: 1.2, repeat: Infinity, delay: 0 }}
+                  />
+                  <motion.div
+                    className={`w-2 h-2 rounded-full ${entry.debate_mode ? 'bg-accent/40' : 'bg-muted-foreground/40'}`}
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                    transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }}
+                  />
+                  <motion.div
+                    className={`w-2 h-2 rounded-full ${entry.debate_mode ? 'bg-accent/40' : 'bg-muted-foreground/40'}`}
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                    transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
+                  />
+                </motion.div>
+                <span className={`text-[13px] ${entry.debate_mode ? 'text-accent/70' : 'text-muted-foreground/60'}`}>{loadingStatus}</span>
+              </div>
             </div>
           )}
         </motion.div>
@@ -1858,6 +1872,9 @@ export default function App() {
                 onStop={stopGeneration}
                 onClearError={() => setError(null)}
                 onError={(message) => setError(message)}
+                debateMode={debateMode}
+                maxDebateRounds={maxDebateRounds}
+                stepReview={stepReview}
               />
             </div>
           </section>
@@ -1986,17 +2003,40 @@ export default function App() {
 interface ChatComposerProps {
   loading: boolean;
   error: string | null;
-  onSend: (payload: { question: string; attachments: string[] }) => Promise<void>;
+  onSend: (payload: {
+    question: string;
+    attachments: string[];
+    customDebateMode?: boolean;
+    customMaxRounds?: number;
+    customStepReview?: boolean;
+  }) => Promise<void>;
   onStop: () => void;
   onClearError: () => void;
   onError: (message: string) => void;
+  debateMode: boolean;
+  maxDebateRounds: number;
+  stepReview: boolean;
 }
 
-function ChatComposer({ loading, error, onSend, onStop, onClearError, onError }: ChatComposerProps) {
+function ChatComposer({
+  loading,
+  error,
+  onSend,
+  onStop,
+  onClearError,
+  onError,
+  debateMode: globalDebateMode,
+  maxDebateRounds: globalMaxRounds,
+  stepReview: globalStepReview,
+}: ChatComposerProps) {
   const [question, setQuestion] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [localDebateMode, setLocalDebateMode] = useState<boolean | null>(null); // null = use global
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Effective debate mode (local override or global)
+  const effectiveDebateMode = localDebateMode !== null ? localDebateMode : globalDebateMode;
 
   const hasContent = Boolean(question.trim()) || attachments.length > 0;
   const canSubmit = hasContent && !loading;
@@ -2026,14 +2066,22 @@ function ChatComposer({ loading, error, onSend, onStop, onClearError, onError }:
     // Clear immediately for better UX
     const currentQuestion = question;
     const currentAttachments = [...attachments];
+    const currentDebateMode = effectiveDebateMode;
     setQuestion("");
     setAttachments([]);
+    setLocalDebateMode(null); // Reset local override after sending
 
     // Refocus textarea
     textareaRef.current?.focus();
 
     try {
-      await onSend({ question: currentQuestion, attachments: currentAttachments });
+      await onSend({
+        question: currentQuestion,
+        attachments: currentAttachments,
+        customDebateMode: currentDebateMode,
+        customMaxRounds: globalMaxRounds,
+        customStepReview: globalStepReview,
+      });
     } catch {
       // On error, restore the content
       setQuestion(currentQuestion);
@@ -2107,6 +2155,26 @@ function ChatComposer({ loading, error, onSend, onStop, onClearError, onError }:
                   />
                 </svg>
                 <span className="hidden sm:inline">Attach</span>
+              </button>
+              {/* Debate mode toggle */}
+              <button
+                type="button"
+                onClick={() => setLocalDebateMode(effectiveDebateMode ? false : true)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-all shadow-sm ${
+                  effectiveDebateMode
+                    ? "border-accent/60 bg-accent/10 text-accent hover:bg-accent/20"
+                    : "border-border/50 bg-background/90 text-foreground hover:bg-muted/60 hover:border-border"
+                }`}
+                title={effectiveDebateMode ? "Debate mode enabled - click to disable" : "Click to enable debate mode"}
+              >
+                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  <path d="M8 10h.01M12 10h.01M16 10h.01" />
+                </svg>
+                <span className="hidden sm:inline">Debate</span>
+                {effectiveDebateMode && (
+                  <span className="hidden sm:inline text-[10px] opacity-70">({globalMaxRounds})</span>
+                )}
               </button>
               <input
                 ref={fileInputRef}
