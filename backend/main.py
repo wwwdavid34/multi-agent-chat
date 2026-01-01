@@ -171,63 +171,12 @@ async def ask_stream(req: AskRequest, request: Request):
                 "debate_paused": False,
             }
 
-            # Create stream and wrap iteration to allow cancellation during long-running nodes
+            # Stream events from the graph
+            # Note: request.is_disconnected() doesn't work reliably for SSE streams
+            # Instead we rely on CancelledError being raised when client disconnects
             print(f"[STREAM] Starting graph stream for thread {req.thread_id}", flush=True)
-            stream = panel_graph.astream(state, config=config)
 
-            async def get_next_event(stream_iter):
-                """Wrapper to get next event from stream."""
-                try:
-                    return await stream_iter.__anext__()
-                except StopAsyncIteration:
-                    return None
-
-            stream_iter = stream.__aiter__()
-            poll_count = 0
-
-            while True:
-                # Create task for getting next event
-                print(f"[STREAM] Waiting for next graph event...", flush=True)
-                event_task = asyncio.create_task(get_next_event(stream_iter))
-
-                # Poll for disconnection while waiting for event (every 100ms)
-                while not event_task.done():
-                    poll_count += 1
-                    is_disconnected = await request.is_disconnected()
-
-                    # Log every 10th poll to show progress
-                    if poll_count % 10 == 0:
-                        print(f"[STREAM] Poll #{poll_count}: task_done={event_task.done()}, disconnected={is_disconnected}", flush=True)
-
-                    if is_disconnected:
-                        print(f"[ABORT] Client disconnected detected for thread {req.thread_id}", flush=True)
-                        print(f"[ABORT] Cancelling event_task...", flush=True)
-                        event_task.cancel()
-                        try:
-                            await event_task
-                            print(f"[ABORT] event_task awaited successfully", flush=True)
-                        except asyncio.CancelledError:
-                            print(f"[ABORT] event_task raised CancelledError (expected)", flush=True)
-
-                        print(f"[ABORT] Closing stream...", flush=True)
-                        try:
-                            await stream.aclose()
-                            print(f"[ABORT] Stream closed successfully", flush=True)
-                        except Exception as e:
-                            print(f"[ABORT] Error closing stream: {e}", flush=True)
-
-                        print(f"[ABORT] Returning from generator", flush=True)
-                        return
-
-                    # Brief sleep to avoid busy-waiting
-                    await asyncio.sleep(0.1)
-
-                # Get the event result
-                event = await event_task
-                if event is None:
-                    print(f"[STREAM] Stream ended (no more events)", flush=True)
-                    break  # Stream ended
-
+            async for event in panel_graph.astream(state, config=config):
                 print(f"[STREAM] Got event with nodes: {list(event.keys())}", flush=True)
 
                 for node_name, node_output in event.items():
