@@ -1,7 +1,7 @@
 import React, { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { askPanel, askPanelStream, fetchInitialKeys } from "./api";
+import { askPanel, askPanelStream, fetchInitialKeys, fetchStorageInfo } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
 import { DebateViewer } from "./components/DebateViewer";
@@ -447,6 +447,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [storageInfo, setStorageInfo] = useState<{
+    mode: string;
+    persistent: string;
+    description: string;
+  } | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(() => {
     const stored = localStorage.getItem("sidebarVisible");
     return stored !== null ? stored === "true" : true; // Default to visible
@@ -596,6 +601,17 @@ export default function App() {
     }
 
     loadInitialKeys();
+  }, []); // Run only once on mount
+
+  // Fetch storage mode information on mount
+  useEffect(() => {
+    async function loadStorageInfo() {
+      const info = await fetchStorageInfo();
+      setStorageInfo(info);
+      console.log('[Storage] Mode:', info.mode, '- Persistent:', info.persistent);
+    }
+
+    loadStorageInfo();
   }, []); // Run only once on mount
 
   // Keyboard shortcuts
@@ -802,6 +818,9 @@ export default function App() {
                     : entry
                 ) ?? [],
               }));
+              // Clear loading state when response is complete
+              setLoading(false);
+              setLoadingStatus("Panel is thinking...");
             },
             onError: (err) => {
               // Remove the optimistic entry on error
@@ -825,6 +844,9 @@ export default function App() {
             ...prev,
             [threadId]: prev[threadId]?.filter((entry) => entry.id !== entryId) ?? [],
           }));
+          // Reset loading state
+          setLoading(false);
+          setLoadingStatus("Panel is thinking...");
           return;
         }
 
@@ -919,6 +941,9 @@ export default function App() {
                     : e
                 ) ?? [],
               }));
+              // Clear loading state when response is complete
+              setLoading(false);
+              setLoadingStatus("Panel is thinking...");
             },
             onError: (err) => {
               setError(err.message);
@@ -932,6 +957,9 @@ export default function App() {
         // Don't show error if request was aborted by user
         if (err instanceof Error && err.name === 'AbortError') {
           console.log('Request aborted by user');
+          // Reset loading state
+          setLoading(false);
+          setLoadingStatus("Panel is thinking...");
           return;
         }
         setError(err instanceof Error ? err.message : "Something went wrong");
@@ -1359,7 +1387,23 @@ export default function App() {
   }, [regenerateIndex, threadId, conversations, handleSend]);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
+      {/* Storage mode warning banner */}
+      {storageInfo && storageInfo.persistent === "false" && (
+        <div className="w-full bg-yellow-500/10 border-b border-yellow-500/30 px-4 py-2 flex items-center gap-2 text-sm">
+          <svg className="w-4 h-4 text-yellow-600 dark:text-yellow-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span className="text-yellow-800 dark:text-yellow-200 font-medium">
+            In-Memory Mode:
+          </span>
+          <span className="text-yellow-700 dark:text-yellow-300">
+            {storageInfo.description}
+          </span>
+        </div>
+      )}
+
+      <div className="flex h-full w-full overflow-hidden">
       {sidebarVisible && (
         <aside className="hidden lg:flex w-72 flex-shrink-0 bg-card px-6 py-8 flex-col gap-6 border-r border-border/60 relative">
         <div className="flex items-center justify-between gap-3">
@@ -1767,6 +1811,7 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }
