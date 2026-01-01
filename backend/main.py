@@ -1,4 +1,5 @@
 """FastAPI application exposing the /ask endpoint."""
+import asyncio
 import json
 import logging
 import os
@@ -169,18 +170,43 @@ async def ask_stream(req: AskRequest, request: Request):
                 "debate_paused": False,
             }
 
-            # Stream events from the graph
-            async for event in panel_graph.astream(state, config=config):
-                # Check if client disconnected (user clicked stop)
-                if await request.is_disconnected():
-                    logger.info(f"Client disconnected for thread {req.thread_id}, stopping generation")
-                    break
+            # Create stream and wrap iteration to allow cancellation during long-running nodes
+            stream = panel_graph.astream(state, config=config)
+
+            async def get_next_event(stream_iter):
+                """Wrapper to get next event from stream."""
+                try:
+                    return await stream_iter.__anext__()
+                except StopAsyncIteration:
+                    return None
+
+            stream_iter = stream.__aiter__()
+
+            while True:
+                # Create task for getting next event
+                event_task = asyncio.create_task(get_next_event(stream_iter))
+
+                # Poll for disconnection while waiting for event (every 100ms)
+                while not event_task.done():
+                    if await request.is_disconnected():
+                        logger.info(f"Client disconnected for thread {req.thread_id}, cancelling generation")
+                        event_task.cancel()
+                        try:
+                            await event_task
+                        except asyncio.CancelledError:
+                            pass
+                        # Close the stream
+                        await stream.aclose()
+                        return
+                    # Brief sleep to avoid busy-waiting
+                    await asyncio.sleep(0.1)
+
+                # Get the event result
+                event = await event_task
+                if event is None:
+                    break  # Stream ended
 
                 for node_name, node_output in event.items():
-                    # Check again for disconnection within event processing
-                    if await request.is_disconnected():
-                        logger.info(f"Client disconnected during event processing for thread {req.thread_id}")
-                        return
 
                     # Send status update for each node
                     if node_name in node_status_map:
