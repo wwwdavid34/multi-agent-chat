@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { ReactNode, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface RegenerateModalProps {
@@ -8,6 +8,11 @@ interface RegenerateModalProps {
   defaultDebateMode?: boolean;
   defaultMaxRounds?: number;
   defaultStepReview?: boolean;
+  title?: string;
+  subtitle?: string;
+  confirmLabel?: string;
+  headerIcon?: ReactNode;
+  confirmIcon?: ReactNode;
 }
 
 export function RegenerateModal({
@@ -17,6 +22,11 @@ export function RegenerateModal({
   defaultDebateMode = false,
   defaultMaxRounds = 3,
   defaultStepReview = false,
+  title = "Regenerate Response",
+  subtitle = "Choose settings for this regeneration",
+  confirmLabel = "Regenerate",
+  headerIcon,
+  confirmIcon,
 }: RegenerateModalProps) {
   const [debateMode, setDebateMode] = useState(defaultDebateMode);
   const [maxDebateRounds, setMaxDebateRounds] = useState(defaultMaxRounds);
@@ -28,6 +38,12 @@ export function RegenerateModal({
   };
 
   if (!open) return null;
+
+  const defaultRegenerateIcon = (
+    <svg viewBox="0 0 24 24" className="w-5 h-5 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
+    </svg>
+  );
 
   return (
     <AnimatePresence>
@@ -50,13 +66,11 @@ export function RegenerateModal({
           <div className="flex items-center justify-between p-6 border-b border-border">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
-                <svg viewBox="0 0 24 24" className="w-5 h-5 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
-                </svg>
+                {headerIcon ?? defaultRegenerateIcon}
               </div>
               <div>
-                <h2 className="text-lg font-semibold m-0">Regenerate Response</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">Choose settings for this regeneration</p>
+                <h2 className="text-lg font-semibold m-0">{title}</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
               </div>
             </div>
             <button
@@ -184,10 +198,12 @@ export function RegenerateModal({
               onClick={handleConfirm}
               className="px-4 py-2 rounded-lg bg-accent text-accent-foreground text-sm font-medium hover:opacity-90 transition-opacity flex items-center gap-2"
             >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
-              </svg>
-              Regenerate
+              {confirmIcon ?? (
+                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
+                </svg>
+              )}
+              {confirmLabel}
             </button>
           </div>
         </motion.div>

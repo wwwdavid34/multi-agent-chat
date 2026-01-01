@@ -55,6 +55,9 @@ const DEFAULT_PANELISTS: PanelistConfigPayload[] = [
   { id: "panelist-1", name: "ChatGPT", provider: "openai", model: "" },
   { id: "panelist-2", name: "ChatGPT 2", provider: "openai", model: "" },
 ];
+const DEFAULT_DEBATE_MODE = false;
+const DEFAULT_MAX_DEBATE_ROUNDS = 3;
+const DEFAULT_STEP_REVIEW = false;
 
 const createPanelist = (existingPanelists: PanelistConfigPayload[]): PanelistConfigPayload => ({
   id: `panelist-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
@@ -469,15 +472,6 @@ export default function App() {
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [regenerateModalOpen, setRegenerateModalOpen] = useState(false);
   const [regenerateIndex, setRegenerateIndex] = useState<number | null>(null);
-  const [debateMode, setDebateMode] = useState(() =>
-    parseJSON<boolean>(localStorage.getItem("debateMode"), false)
-  );
-  const [maxDebateRounds, setMaxDebateRounds] = useState(() =>
-    parseJSON<number>(localStorage.getItem("maxDebateRounds"), 3)
-  );
-  const [stepReview, setStepReview] = useState(() =>
-    parseJSON<boolean>(localStorage.getItem("stepReview"), false)
-  );
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState<string>("Panel is thinking...");
   const [error, setError] = useState<string | null>(null);
@@ -556,18 +550,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("enabledPanelists", JSON.stringify(Array.from(enabledPanelists)));
   }, [enabledPanelists]);
-
-  useEffect(() => {
-    localStorage.setItem("debateMode", JSON.stringify(debateMode));
-  }, [debateMode]);
-
-  useEffect(() => {
-    localStorage.setItem("maxDebateRounds", JSON.stringify(maxDebateRounds));
-  }, [maxDebateRounds]);
-
-  useEffect(() => {
-    localStorage.setItem("stepReview", JSON.stringify(stepReview));
-  }, [stepReview]);
 
   // Sync enabled panelists when panelists change (enable new ones by default)
   useEffect(() => {
@@ -798,10 +780,9 @@ export default function App() {
       const sanitizedQuestion = question.trim() || "See attached images.";
       const entryId = `${threadId}-${Date.now()}`;
 
-      // Use custom debate settings if provided, otherwise use global settings
-      const useDebateMode = customDebateMode !== undefined ? customDebateMode : debateMode;
-      const useMaxRounds = customMaxRounds !== undefined ? customMaxRounds : maxDebateRounds;
-      const useStepReview = customStepReview !== undefined ? customStepReview : stepReview;
+      const useDebateMode = customDebateMode ?? DEFAULT_DEBATE_MODE;
+      const useMaxRounds = customMaxRounds ?? DEFAULT_MAX_DEBATE_ROUNDS;
+      const useStepReview = customStepReview ?? DEFAULT_STEP_REVIEW;
 
       // Immediately add user message with loading state for assistant response
       const optimisticEntry: MessageEntry = {
@@ -942,7 +923,7 @@ export default function App() {
         setAbortController(null); // Clean up abort controller
       }
     },
-    [loading, preparedPanelists, sanitizedProviderKeys, threadId, debateMode, maxDebateRounds, stepReview]
+    [loading, preparedPanelists, sanitizedProviderKeys, threadId]
   );
 
   const handleContinueDebate = useCallback(
@@ -1872,9 +1853,6 @@ export default function App() {
                 onStop={stopGeneration}
                 onClearError={() => setError(null)}
                 onError={(message) => setError(message)}
-                debateMode={debateMode}
-                maxDebateRounds={maxDebateRounds}
-                stepReview={stepReview}
               />
             </div>
           </section>
@@ -1893,12 +1871,6 @@ export default function App() {
         onFetchModels={handleFetchProviderModels}
         maxPanelists={MAX_PANELISTS}
         onLoadPreset={handleLoadPreset}
-        debateMode={debateMode}
-        onDebateModeChange={setDebateMode}
-        maxDebateRounds={maxDebateRounds}
-        onMaxDebateRoundsChange={setMaxDebateRounds}
-        stepReview={stepReview}
-        onStepReviewChange={setStepReview}
       />
 
       {/* Regenerate Modal */}
@@ -1911,18 +1883,18 @@ export default function App() {
         onConfirm={confirmRegenerate}
         defaultDebateMode={
           regenerateIndex !== null
-            ? conversations[threadId]?.[regenerateIndex]?.debate_mode ?? debateMode
-            : debateMode
+            ? conversations[threadId]?.[regenerateIndex]?.debate_mode ?? DEFAULT_DEBATE_MODE
+            : DEFAULT_DEBATE_MODE
         }
         defaultMaxRounds={
           regenerateIndex !== null
-            ? conversations[threadId]?.[regenerateIndex]?.max_debate_rounds ?? maxDebateRounds
-            : maxDebateRounds
+            ? conversations[threadId]?.[regenerateIndex]?.max_debate_rounds ?? DEFAULT_MAX_DEBATE_ROUNDS
+            : DEFAULT_MAX_DEBATE_ROUNDS
         }
         defaultStepReview={
           regenerateIndex !== null
-            ? conversations[threadId]?.[regenerateIndex]?.step_review ?? stepReview
-            : stepReview
+            ? conversations[threadId]?.[regenerateIndex]?.step_review ?? DEFAULT_STEP_REVIEW
+            : DEFAULT_STEP_REVIEW
         }
       />
 
@@ -2013,9 +1985,6 @@ interface ChatComposerProps {
   onStop: () => void;
   onClearError: () => void;
   onError: (message: string) => void;
-  debateMode: boolean;
-  maxDebateRounds: number;
-  stepReview: boolean;
 }
 
 function ChatComposer({
@@ -2025,18 +1994,15 @@ function ChatComposer({
   onStop,
   onClearError,
   onError,
-  debateMode: globalDebateMode,
-  maxDebateRounds: globalMaxRounds,
-  stepReview: globalStepReview,
 }: ChatComposerProps) {
   const [question, setQuestion] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
-  const [localDebateMode, setLocalDebateMode] = useState<boolean | null>(null); // null = use global
+  const [debateSettingsOpen, setDebateSettingsOpen] = useState(false);
+  const [debateMode, setDebateMode] = useState(DEFAULT_DEBATE_MODE);
+  const [maxDebateRounds, setMaxDebateRounds] = useState(DEFAULT_MAX_DEBATE_ROUNDS);
+  const [stepReview, setStepReview] = useState(DEFAULT_STEP_REVIEW);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Effective debate mode (local override or global)
-  const effectiveDebateMode = localDebateMode !== null ? localDebateMode : globalDebateMode;
 
   const hasContent = Boolean(question.trim()) || attachments.length > 0;
   const canSubmit = hasContent && !loading;
@@ -2066,10 +2032,11 @@ function ChatComposer({
     // Clear immediately for better UX
     const currentQuestion = question;
     const currentAttachments = [...attachments];
-    const currentDebateMode = effectiveDebateMode;
+    const currentDebateMode = debateMode;
+    const currentMaxRounds = maxDebateRounds;
+    const currentStepReview = stepReview;
     setQuestion("");
     setAttachments([]);
-    setLocalDebateMode(null); // Reset local override after sending
 
     // Refocus textarea
     textareaRef.current?.focus();
@@ -2079,8 +2046,8 @@ function ChatComposer({
         question: currentQuestion,
         attachments: currentAttachments,
         customDebateMode: currentDebateMode,
-        customMaxRounds: globalMaxRounds,
-        customStepReview: globalStepReview,
+        customMaxRounds: currentMaxRounds,
+        customStepReview: currentStepReview,
       });
     } catch {
       // On error, restore the content
@@ -2115,157 +2082,186 @@ function ChatComposer({
   }
 
   return (
-    <form className="min-w-0" onSubmit={handleSubmit}>
-      <div className="flex flex-col gap-3 min-w-0">
-        <div className="relative rounded-2xl border border-border/50 bg-background/95 backdrop-blur-sm max-w-full shadow-sm">
-          <textarea
-            ref={textareaRef}
-            value={question}
-            onChange={(event) => {
-              setQuestion(event.target.value);
-              if (error) onClearError();
-            }}
-            onKeyDown={(event) => {
-              const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-              const modKey = isMac ? event.metaKey : event.ctrlKey;
+    <>
+      <form className="min-w-0" onSubmit={handleSubmit}>
+        <div className="flex flex-col gap-3 min-w-0">
+          <div className="relative rounded-2xl border border-border/50 bg-background/95 backdrop-blur-sm max-w-full shadow-sm">
+            <textarea
+              ref={textareaRef}
+              value={question}
+              onChange={(event) => {
+                setQuestion(event.target.value);
+                if (error) onClearError();
+              }}
+              onKeyDown={(event) => {
+                const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+                const modKey = isMac ? event.metaKey : event.ctrlKey;
 
-              // Cmd/Ctrl + Enter: Submit
-              if (modKey && event.key === 'Enter' && canSubmit) {
-                event.preventDefault();
-                handleSubmit(event as any);
-              }
-            }}
-            placeholder="Send a message..."
-            rows={1}
-            className="w-full border-none rounded-2xl px-4 md:px-5 pt-3.5 md:pt-4 pb-14 md:pb-16 text-sm md:text-[15px] font-inherit resize-none overflow-y-hidden bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed"
-          />
+                // Cmd/Ctrl + Enter: Submit
+                if (modKey && event.key === 'Enter' && canSubmit) {
+                  event.preventDefault();
+                  handleSubmit(event as any);
+                }
+              }}
+              placeholder="Send a message..."
+              rows={1}
+              className="w-full border-none rounded-2xl px-4 md:px-5 pt-3.5 md:pt-4 pb-14 md:pb-16 text-sm md:text-[15px] font-inherit resize-none overflow-y-hidden bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed"
+            />
 
-          {/* Button container with separator */}
-          <div className="absolute left-0 right-0 bottom-0 pt-3 px-4 md:px-5 pb-3.5 md:pb-4 bg-gradient-to-t from-background/95 via-background/80 to-transparent border-t border-border/20 rounded-b-2xl">
-            <div className="flex items-center gap-2 md:gap-2.5">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border/50 bg-background/90 text-foreground text-xs font-medium cursor-pointer hover:bg-muted/60 hover:border-border transition-all shadow-sm"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" className="w-3.5 h-3.5">
-                  <path
-                    fill="currentColor"
-                    d="M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z"
-                  />
-                </svg>
-                <span className="hidden sm:inline">Attach</span>
-              </button>
-              {/* Debate mode toggle */}
-              <button
-                type="button"
-                onClick={() => setLocalDebateMode(effectiveDebateMode ? false : true)}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-all shadow-sm ${
-                  effectiveDebateMode
-                    ? "border-accent/60 bg-accent/10 text-accent hover:bg-accent/20"
-                    : "border-border/50 bg-background/90 text-foreground hover:bg-muted/60 hover:border-border"
-                }`}
-                title={effectiveDebateMode ? "Debate mode enabled - click to disable" : "Click to enable debate mode"}
-              >
-                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  <path d="M8 10h.01M12 10h.01M16 10h.01" />
-                </svg>
-                <span className="hidden sm:inline">Debate</span>
-                {effectiveDebateMode && (
-                  <span className="hidden sm:inline text-[10px] opacity-70">({globalMaxRounds})</span>
-                )}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(event) => {
-                  handleFilesSelected(event.target.files);
-                  event.target.value = "";
-                }}
-              />
-              <motion.button
-                type={canStop ? "button" : "submit"}
-                onClick={canStop ? (e) => { e.preventDefault(); onStop(); } : undefined}
-                className={`ml-auto w-10 h-10 md:w-11 md:h-11 rounded-xl inline-flex items-center justify-center border-none cursor-pointer transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${
-                  canStop
-                    ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                    : 'bg-accent text-accent-foreground hover:opacity-90'
-                }`}
-                disabled={!canSubmit && !canStop}
-                aria-label={canStop ? "Stop generation" : "Send message"}
-                whileHover={{ scale: (canSubmit || canStop) ? 1.05 : 1 }}
-                whileTap={{ scale: (canSubmit || canStop) ? 0.95 : 1 }}
-                animate={{
-                  opacity: (hasContent || canStop) ? 1 : 0.3,
-                  scale: (hasContent || canStop) ? 1 : 0.9
-                }}
-                transition={{ duration: 0.2 }}
-              >
-                {canStop ? (
-                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
-                    <rect x="6" y="6" width="12" height="12" rx="1" />
+            {/* Button container with separator */}
+            <div className="absolute left-0 right-0 bottom-0 pt-3 px-4 md:px-5 pb-3.5 md:pb-4 bg-gradient-to-t from-background/95 via-background/80 to-transparent border-t border-border/20 rounded-b-2xl">
+              <div className="flex items-center gap-2 md:gap-2.5">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border/50 bg-background/90 text-foreground text-xs font-medium cursor-pointer hover:bg-muted/60 hover:border-border transition-all shadow-sm"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className="w-3.5 h-3.5">
+                    <path
+                      fill="currentColor"
+                      d="M16.5 6.5v9.25a4.25 4.25 0 0 1-8.5 0V5a2.75 2.75 0 0 1 5.5 0v9a1.25 1.25 0 0 1-2.5 0V6.5h-1.5V14a2.75 2.75 0 1 0 5.5 0V5a4.25 4.25 0 0 0-8.5 0v10.75a5.75 5.75 0 1 0 11.5 0V6.5z"
+                    />
                   </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" className="w-5 h-5">
-                    <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+                  <span className="hidden sm:inline">Attach</span>
+                </button>
+                {/* Debate settings */}
+                <button
+                  type="button"
+                  onClick={() => setDebateSettingsOpen(true)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-all shadow-sm ${
+                    debateMode
+                      ? "border-accent/60 bg-accent/10 text-accent hover:bg-accent/20"
+                      : "border-border/50 bg-background/90 text-foreground hover:bg-muted/60 hover:border-border"
+                  }`}
+                  title={debateMode ? "Debate mode enabled - click to configure" : "Click to configure debate mode"}
+                >
+                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
                   </svg>
-                )}
-              </motion.button>
+                  <span className="hidden sm:inline">Debate</span>
+                  {debateMode && (
+                    <span className="hidden sm:inline text-[10px] opacity-70">({maxDebateRounds})</span>
+                  )}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    handleFilesSelected(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
+                <motion.button
+                  type={canStop ? "button" : "submit"}
+                  onClick={canStop ? (e) => { e.preventDefault(); onStop(); } : undefined}
+                  className={`ml-auto w-10 h-10 md:w-11 md:h-11 rounded-xl inline-flex items-center justify-center border-none cursor-pointer transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${
+                    canStop
+                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                      : 'bg-accent text-accent-foreground hover:opacity-90'
+                  }`}
+                  disabled={!canSubmit && !canStop}
+                  aria-label={canStop ? "Stop generation" : "Send message"}
+                  whileHover={{ scale: (canSubmit || canStop) ? 1.05 : 1 }}
+                  whileTap={{ scale: (canSubmit || canStop) ? 0.95 : 1 }}
+                  animate={{
+                    opacity: (hasContent || canStop) ? 1 : 0.3,
+                    scale: (hasContent || canStop) ? 1 : 0.9
+                  }}
+                  transition={{ duration: 0.2 }}
+                >
+                  {canStop ? (
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="1" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" aria-hidden="true" className="w-5 h-5">
+                      <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+                    </svg>
+                  )}
+                </motion.button>
             </div>
           </div>
         </div>
 
-        <AnimatePresence>
-          {attachments.length > 0 && (
-            <motion.div
-              className="flex flex-wrap gap-2.5"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-            >
-              {attachments.map((src, index) => (
-                <motion.div
-                  key={index}
-                  className="relative w-20 h-20 rounded-xl overflow-hidden border-2 border-border/40 shadow-sm group"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.2, delay: index * 0.03 }}
-                >
-                  <img src={src} alt={`preview-${index + 1}`} className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      removeAttachment(index);
-                      if (error) onClearError();
-                    }}
-                    className="absolute top-1 right-1 border-none rounded-full w-6 h-6 text-xs bg-foreground/90 text-background cursor-pointer hover:bg-foreground transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center font-semibold shadow-sm"
+          <AnimatePresence>
+            {attachments.length > 0 && (
+              <motion.div
+                className="flex flex-wrap gap-2.5"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                {attachments.map((src, index) => (
+                  <motion.div
+                    key={index}
+                    className="relative w-20 h-20 rounded-xl overflow-hidden border-2 border-border/40 shadow-sm group"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: 0.2, delay: index * 0.03 }}
                   >
-                    ×
-                  </button>
-                </motion.div>
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
+                    <img src={src} alt={`preview-${index + 1}`} className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        removeAttachment(index);
+                        if (error) onClearError();
+                      }}
+                      className="absolute top-1 right-1 border-none rounded-full w-6 h-6 text-xs bg-foreground/90 text-background cursor-pointer hover:bg-foreground transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center font-semibold shadow-sm"
+                    >
+                      ×
+                    </button>
+                  </motion.div>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-        <AnimatePresence>
-          {error && (
-            <motion.p
-              className="text-destructive text-[13px] m-0 px-1"
-              initial={{ opacity: 0, y: -5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -5 }}
-            >
-              {error}
-            </motion.p>
-          )}
-        </AnimatePresence>
-      </div>
-    </form>
+          <AnimatePresence>
+            {error && (
+              <motion.p
+                className="text-destructive text-[13px] m-0 px-1"
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+              >
+                {error}
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </div>
+      </form>
+
+      <RegenerateModal
+        open={debateSettingsOpen}
+        onClose={() => setDebateSettingsOpen(false)}
+        onConfirm={(enabled, rounds, useStepReview) => {
+          setDebateMode(enabled);
+          setMaxDebateRounds(rounds);
+          setStepReview(useStepReview);
+        }}
+        defaultDebateMode={debateMode}
+        defaultMaxRounds={maxDebateRounds}
+        defaultStepReview={stepReview}
+        title="Debate Settings"
+        subtitle="Choose settings for your next message"
+        confirmLabel="Apply"
+        headerIcon={
+          <svg viewBox="0 0 24 24" className="w-5 h-5 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            <path d="M8 10h.01M12 10h.01M16 10h.01" />
+          </svg>
+        }
+        confirmIcon={
+          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+        }
+      />
+    </>
   );
 }

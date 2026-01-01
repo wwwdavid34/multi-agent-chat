@@ -25,15 +25,9 @@ interface PanelConfiguratorProps {
   onFetchModels: (provider: LLMProvider) => Promise<void>;
   maxPanelists: number;
   onLoadPreset: (preset: PanelistPreset) => void;
-  debateMode: boolean;
-  onDebateModeChange: (enabled: boolean) => void;
-  maxDebateRounds: number;
-  onMaxDebateRoundsChange: (rounds: number) => void;
-  stepReview: boolean;
-  onStepReviewChange: (enabled: boolean) => void;
 }
 
-type TabType = "panelists" | "debate" | "presets" | "api-keys";
+type TabType = "panelists" | "presets" | "api-keys";
 
 export function PanelConfigurator({
   open,
@@ -49,12 +43,6 @@ export function PanelConfigurator({
   onFetchModels,
   maxPanelists,
   onLoadPreset,
-  debateMode,
-  onDebateModeChange,
-  maxDebateRounds,
-  onMaxDebateRoundsChange,
-  stepReview,
-  onStepReviewChange,
 }: PanelConfiguratorProps) {
   const canAddMore = panelists.length < maxPanelists;
   const [activeTab, setActiveTab] = useState<TabType>("panelists");
@@ -175,17 +163,6 @@ export function PanelConfigurator({
                 }`}
               >
                 Panelists
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("debate")}
-                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                  activeTab === "debate"
-                    ? "bg-accent/10 text-accent border-b-2 border-accent"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
-                }`}
-              >
-                Debate
               </button>
               <button
                 type="button"
@@ -315,104 +292,6 @@ export function PanelConfigurator({
                 })}
               </div>
             </section>
-                </div>
-              )}
-
-              {/* Debate Tab */}
-              {activeTab === "debate" && (
-                <div>
-                  <section className="space-y-6">
-                    <header>
-                      <h3 className="text-base font-semibold m-0">Debate Mode Settings</h3>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Enable debate mode to let agents discuss and refine their responses until consensus is reached
-                      </p>
-                    </header>
-
-                    {/* Debate Mode Toggle */}
-                    <div className="rounded-lg border border-border p-4 bg-card">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="text-sm font-semibold m-0">Enable Debate Mode</h4>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Agents will review each other's responses and debate until they reach consensus or max rounds
-                          </p>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={debateMode}
-                            onChange={(e) => onDebateModeChange(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-accent/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Max Debate Rounds */}
-                    <div className="rounded-lg border border-border p-4 bg-card">
-                      <label className="block">
-                        <div className="flex items-center justify-between mb-3">
-                          <div>
-                            <h4 className="text-sm font-semibold m-0">Maximum Debate Rounds</h4>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Limit the number of debate iterations (1-10 rounds)
-                            </p>
-                          </div>
-                          <span className="text-lg font-bold text-accent">{maxDebateRounds}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="1"
-                          max="10"
-                          value={maxDebateRounds}
-                          onChange={(e) => onMaxDebateRoundsChange(Number(e.target.value))}
-                          disabled={!debateMode}
-                          className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed accent-accent"
-                        />
-                        <div className="flex justify-between text-xs text-muted-foreground mt-2">
-                          <span>1 round</span>
-                          <span>10 rounds</span>
-                        </div>
-                      </label>
-                    </div>
-
-                    {/* Step Review Mode */}
-                    <div className="rounded-lg border border-border p-4 bg-card">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="text-sm font-semibold m-0">Enable Step Review Mode</h4>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Reveal debate rounds one at a time - click to view next round
-                          </p>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stepReview}
-                            onChange={(e) => onStepReviewChange(e.target.checked)}
-                            disabled={!debateMode}
-                            className="sr-only peer"
-                          />
-                          <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-accent/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"></div>
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Debate Mode Info */}
-                    <div className="rounded-lg border border-accent/20 bg-accent/5 p-4">
-                      <h4 className="text-sm font-semibold m-0 mb-2 text-accent">How Debate Mode Works</h4>
-                      <ul className="text-xs text-muted-foreground space-y-1.5 list-disc list-inside">
-                        <li>Round 1: Each agent provides their initial response</li>
-                        <li>Round 2+: Agents see others' responses and can refine their perspective</li>
-                        <li>Agents can tag specific panelists using @Name to direct arguments</li>
-                        <li>AI consensus checker evaluates if agents agree or need more debate</li>
-                        <li>Debate ends when consensus is reached or max rounds are hit</li>
-                        <li>Final summary synthesizes all debate rounds</li>
-                      </ul>
-                    </div>
-                  </section>
                 </div>
               )}
 

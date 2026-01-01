@@ -1,3 +1,4 @@
+import { ReactNode } from "react";
 interface RegenerateModalProps {
     open: boolean;
     onClose: () => void;
@@ -5,6 +6,11 @@ interface RegenerateModalProps {
     defaultDebateMode?: boolean;
     defaultMaxRounds?: number;
     defaultStepReview?: boolean;
+    title?: string;
+    subtitle?: string;
+    confirmLabel?: string;
+    headerIcon?: ReactNode;
+    confirmIcon?: ReactNode;
 }
-export declare function RegenerateModal({ open, onClose, onConfirm, defaultDebateMode, defaultMaxRounds, defaultStepReview, }: RegenerateModalProps): import("react/jsx-runtime").JSX.Element | null;
+export declare function RegenerateModal({ open, onClose, onConfirm, defaultDebateMode, defaultMaxRounds, defaultStepReview, title, subtitle, confirmLabel, headerIcon, confirmIcon, }: RegenerateModalProps): import("react/jsx-runtime").JSX.Element | null;
 export {};

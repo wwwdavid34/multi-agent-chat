@@ -83,10 +83,10 @@ export async function askPanelStream(body, callbacks, signal) {
         }
     }
     catch (error) {
-        // Don't treat abort as an error - it's user-initiated
+        // Re-throw abort errors so caller can handle UI cleanup
         if (error instanceof Error && error.name === 'AbortError') {
             console.log('Request aborted by user');
-            return;
+            throw error; // Re-throw so App.tsx catch block can reset UI state
         }
         if (callbacks.onError) {
             callbacks.onError(error instanceof Error ? error : new Error(String(error)));
@@ -95,6 +95,23 @@ export async function askPanelStream(body, callbacks, signal) {
     }
     finally {
         reader.releaseLock();
+    }
+}
+/**
+ * Fetch storage mode information from backend
+ */
+export async function fetchStorageInfo() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/storage-info`);
+        if (!res.ok) {
+            console.warn("Failed to fetch storage info:", res.statusText);
+            return { mode: "unknown", persistent: "false", description: "Unknown storage mode" };
+        }
+        return await res.json();
+    }
+    catch (error) {
+        console.warn("Failed to fetch storage info:", error);
+        return { mode: "unknown", persistent: "false", description: "Unknown storage mode" };
     }
 }
 /**
