@@ -236,7 +236,7 @@ const MessageBubble = memo(function MessageBubble({
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
-          {entry.summary ? (
+          {entry.summary || entry.debate_paused ? (
             <>
               {entry.stopped ? (
                 <div className="flex items-center gap-2 text-muted-foreground py-2">
@@ -245,9 +245,17 @@ const MessageBubble = memo(function MessageBubble({
                   </svg>
                   <span className="text-sm italic">{entry.summary}</span>
                 </div>
-              ) : (
+              ) : entry.summary ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   <Markdown content={entry.summary} />
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-muted-foreground py-2">
+                  <svg viewBox="0 0 24 24" className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 8v4l3 3" />
+                    <circle cx="12" cy="12" r="9" />
+                  </svg>
+                  <span className="text-sm italic">Debate paused for review.</span>
                 </div>
               )}
 
