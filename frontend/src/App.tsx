@@ -437,6 +437,8 @@ export default function App() {
   });
   const [newThreadName, setNewThreadName] = useState("");
   const [isCreatingThread, setIsCreatingThread] = useState(false);
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [editingThreadName, setEditingThreadName] = useState("");
   const [panelists, setPanelists] = useState<PanelistConfigPayload[]>(() => {
     const stored = parseJSON<PanelistConfigPayload[]>(localStorage.getItem("panelists"), DEFAULT_PANELISTS);
     return stored.length > 0 ? stored : DEFAULT_PANELISTS;
@@ -489,6 +491,7 @@ export default function App() {
     return new Set(panelists.map((p) => p.id));
   });
   const newThreadInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
 
@@ -587,6 +590,17 @@ export default function App() {
     }
   }, [isCreatingThread]);
 
+  // Auto-focus rename input when editing starts
+  useEffect(() => {
+    if (editingThreadId) {
+      const frame = requestAnimationFrame(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [editingThreadId]);
+
   // Fetch initial API keys from environment variables on mount
   useEffect(() => {
     async function loadInitialKeys() {
@@ -666,12 +680,16 @@ export default function App() {
           e.preventDefault();
           cancelThreadCreation();
         }
+        if (editingThreadId) {
+          e.preventDefault();
+          cancelThreadRename();
+        }
       }
     }
 
     window.addEventListener('keydown', handleKeyboardShortcut);
     return () => window.removeEventListener('keydown', handleKeyboardShortcut);
-  }, [configOpen, isCreatingThread, showKeyboardShortcuts]);
+  }, [configOpen, isCreatingThread, showKeyboardShortcuts, editingThreadId]);
 
   const togglePanelist = useCallback((id: string) => {
     setEnabledPanelists((prev) => {
@@ -1046,19 +1064,38 @@ export default function App() {
   }
 
   function handleRenameThread(id: string) {
-    const proposed = prompt("Rename thread", id)?.trim();
-    if (!proposed || proposed === id || threads.includes(proposed)) {
+    setEditingThreadId(id);
+    setEditingThreadName(id);
+  }
+
+  function saveThreadRename() {
+    if (!editingThreadId) return;
+
+    const proposed = editingThreadName.trim();
+    const oldId = editingThreadId;
+
+    // Cancel if empty, unchanged, or duplicate
+    if (!proposed || proposed === oldId || (proposed !== oldId && threads.includes(proposed))) {
+      cancelThreadRename();
       return;
     }
 
-    setThreads((prev) => prev.map((thread) => (thread === id ? proposed : thread)));
+    setThreads((prev) => prev.map((thread) => (thread === oldId ? proposed : thread)));
     setConversations((prev) => {
-      const { [id]: entries, ...rest } = prev;
+      const { [oldId]: entries, ...rest } = prev;
       return { ...rest, [proposed]: entries ?? [] };
     });
-    if (threadId === id) {
+    if (threadId === oldId) {
       setThreadId(proposed);
     }
+
+    setEditingThreadId(null);
+    setEditingThreadName("");
+  }
+
+  function cancelThreadRename() {
+    setEditingThreadId(null);
+    setEditingThreadName("");
   }
 
   function handleDeleteThread(id: string) {
@@ -1466,19 +1503,45 @@ export default function App() {
           {threads.map((id) => (
             <li key={id} className="group">
               <div className="flex items-center gap-1.5 relative">
-                <button
-                  type="button"
-                  className={`flex-1 flex items-center justify-between px-3.5 py-2 rounded-lg border text-[13px] transition-all ${
-                    threadId === id
-                      ? "border-accent/60 bg-accent/8 text-accent font-medium"
-                      : "border-border/40 bg-transparent font-normal text-foreground hover:bg-muted/30 hover:border-border"
-                  }`}
-                  onClick={() => handleThreadSelect(id)}
-                >
-                  <span className="truncate">{id}</span>
-                </button>
+                {editingThreadId === id ? (
+                  <input
+                    ref={renameInputRef}
+                    type="text"
+                    value={editingThreadName}
+                    onChange={(e) => setEditingThreadName(e.target.value)}
+                    onBlur={saveThreadRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        saveThreadRename();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelThreadRename();
+                      }
+                    }}
+                    className={`flex-1 px-3.5 py-2 rounded-lg border text-[13px] transition-all bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 ${
+                      threadId === id
+                        ? "border-accent/60"
+                        : "border-border/60"
+                    }`}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className={`flex-1 flex items-center justify-between px-3.5 py-2 rounded-lg border text-[13px] transition-all ${
+                      threadId === id
+                        ? "border-accent/60 bg-accent/8 text-accent font-medium"
+                        : "border-border/40 bg-transparent font-normal text-foreground hover:bg-muted/30 hover:border-border"
+                    }`}
+                    onClick={() => handleThreadSelect(id)}
+                    onDoubleClick={() => handleRenameThread(id)}
+                  >
+                    <span className="truncate">{id}</span>
+                  </button>
+                )}
 
-                {/* Action buttons - visible on hover */}
+                {/* Action buttons - visible on hover, hidden when editing */}
+                {editingThreadId !== id && (
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   <button
                     type="button"
@@ -1519,6 +1582,7 @@ export default function App() {
                     </svg>
                   </button>
                 </div>
+                )}
               </div>
             </li>
           ))}
