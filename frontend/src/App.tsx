@@ -362,7 +362,7 @@ const MessageBubble = memo(function MessageBubble({
                   >
                     <div className={
                       viewMode === "grid"
-                        ? "relative left-1/2 right-1/2 -mx-[50vw] w-screen px-4 sm:px-6 md:px-8 lg:px-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                        ? "relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-[100vw] pl-4 pr-8 sm:pl-6 sm:pr-10 md:pl-8 md:pr-12 lg:pl-12 lg:pr-16 xl:pl-16 xl:pr-24 2xl:pl-20 2xl:pr-28 flex flex-wrap justify-center gap-4"
                         : "flex flex-col gap-4"
                     }>
                     {Object.entries(entry.panel_responses).map(([name, text], idx) => {
@@ -371,7 +371,9 @@ const MessageBubble = memo(function MessageBubble({
                       return (
                       <motion.article
                         key={name}
-                        className="border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response"
+                        className={`border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response ${
+                          viewMode === "grid" ? "w-full md:w-[calc(50%-0.5rem)] lg:w-[calc(33.333%-0.67rem)] xl:w-[calc(25%-0.75rem)]" : ""
+                        }`}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.3, delay: idx * 0.05 }}
