@@ -57,6 +57,7 @@ export async function askPanelStream(body, callbacks, signal) {
                                 thread_id: event.thread_id,
                                 panel_responses: event.panel_responses,
                                 debate_history: event.debate_history,
+                                usage: event.usage,
                             });
                         }
                         else if (event.type === "result" && callbacks.onResult) {
@@ -65,6 +66,7 @@ export async function askPanelStream(body, callbacks, signal) {
                                 summary: event.summary,
                                 panel_responses: event.panel_responses,
                                 debate_history: event.debate_history,
+                                usage: event.usage,
                             });
                         }
                         else if (event.type === "error" && callbacks.onError) {

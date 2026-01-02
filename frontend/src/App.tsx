@@ -356,7 +356,7 @@ const MessageBubble = memo(function MessageBubble({
                   <motion.div
                     className={`mt-6 border-t border-border/50 pt-6 ${
                       viewMode === "grid"
-                        ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                        ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 -mx-4 sm:-mx-6 md:-mx-8 lg:-mx-12 xl:-mx-16 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16"
                         : "flex flex-col gap-4"
                     }`}
                     initial={{ opacity: 0, height: 0 }}
