@@ -80,6 +80,7 @@ const MessageBubble = memo(function MessageBubble({
   onDelete,
   onRegenerate,
   onContinueDebate,
+  containerWidth,
 }: {
   entry: MessageEntry;
   onToggle: () => void;
@@ -92,8 +93,10 @@ const MessageBubble = memo(function MessageBubble({
   onDelete?: () => void;
   onRegenerate?: () => void;
   onContinueDebate?: () => void;
+  containerWidth?: number;
 }) {
   const [viewMode, setViewMode] = React.useState<"list" | "grid">("list");
+  const [carouselIndex, setCarouselIndex] = React.useState(0);
   const displayStatus = status ?? loadingStatus;
   const statusTrailText = (() => {
     if (!statusTrail || statusTrail.length <= 1) return null;
@@ -360,20 +363,51 @@ const MessageBubble = memo(function MessageBubble({
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                   >
-                    <div className={
-                      viewMode === "grid"
-                        ? "relative left-1/2 right-1/2 -ml-[calc(50vw-0.5rem)] -mr-[calc(50vw-0.5rem)] w-[calc(100vw-1rem)] px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 2xl:px-20 flex flex-wrap justify-center gap-4"
-                        : "flex flex-col gap-4"
-                    }>
-                    {Object.entries(entry.panel_responses).map(([name, text], idx) => {
+                    {viewMode === "grid" ? (
+                      // Carousel view - break out of max-w-3xl constraint to fill scroll container
+                      <div
+                        className="relative"
+                        style={containerWidth ? {
+                          width: `${containerWidth}px`,
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          paddingLeft: '3rem',
+                          paddingRight: '3rem',
+                        } : undefined}
+                      >
+                        {(() => {
+                          const responses = Object.entries(entry.panel_responses);
+                          const itemsPerPage = 3;
+                          const totalPages = Math.ceil(responses.length / itemsPerPage);
+                          const startIdx = carouselIndex * itemsPerPage;
+                          const visibleResponses = responses.slice(startIdx, startIdx + itemsPerPage);
+                          const showPrevButton = carouselIndex > 0;
+                          const showNextButton = carouselIndex < totalPages - 1;
+
+                          return (
+                            <>
+                              {/* Navigation buttons */}
+                              {showPrevButton && (
+                                <button
+                                  onClick={() => setCarouselIndex(carouselIndex - 1)}
+                                  className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 rounded-full bg-background border border-border shadow-lg flex items-center justify-center hover:bg-muted transition-colors"
+                                  aria-label="Previous"
+                                >
+                                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <polyline points="15 18 9 12 15 6" />
+                                  </svg>
+                                </button>
+                              )}
+
+                              {/* Responses grid */}
+                              <div className="flex gap-4 justify-center">
+                                {visibleResponses.map(([name, text], idx) => {
                       // Find the panelist config to show model info
                       const panelist = entry.panelists.find((p) => p.name === name);
                       return (
                       <motion.article
                         key={name}
-                        className={`border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response ${
-                          viewMode === "grid" ? "w-full md:w-[calc(50%-0.5rem)] lg:w-[calc(33.333%-0.67rem)] xl:w-[calc(25%-0.75rem)]" : ""
-                        }`}
+                        className="border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response flex-1 min-w-0 max-w-[calc(33.333%-0.67rem)]"
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.3, delay: idx * 0.05 }}
@@ -412,7 +446,89 @@ const MessageBubble = memo(function MessageBubble({
                       </motion.article>
                       );
                     })}
-                    </div>
+                              </div>
+
+                              {/* Next button */}
+                              {showNextButton && (
+                                <button
+                                  onClick={() => setCarouselIndex(carouselIndex + 1)}
+                                  className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 rounded-full bg-background border border-border shadow-lg flex items-center justify-center hover:bg-muted transition-colors"
+                                  aria-label="Next"
+                                >
+                                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <polyline points="9 18 15 12 9 6" />
+                                  </svg>
+                                </button>
+                              )}
+
+                              {/* Page indicator */}
+                              {totalPages > 1 && (
+                                <div className="flex justify-center gap-2 mt-4">
+                                  {Array.from({ length: totalPages }).map((_, i) => (
+                                    <button
+                                      key={i}
+                                      onClick={() => setCarouselIndex(i)}
+                                      className={`w-2 h-2 rounded-full transition-colors ${
+                                        i === carouselIndex ? "bg-accent" : "bg-border hover:bg-muted-foreground"
+                                      }`}
+                                      aria-label={`Go to page ${i + 1}`}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      // List view
+                      <div className="flex flex-col gap-4">
+                        {Object.entries(entry.panel_responses).map(([name, text], idx) => {
+                          const panelist = entry.panelists.find((p) => p.name === name);
+                          return (
+                            <motion.article
+                              key={name}
+                              className="border border-border/40 rounded-2xl p-5 bg-muted/20 hover:bg-muted/30 transition-colors group/response"
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.3, delay: idx * 0.05 }}
+                            >
+                              <div className="flex items-center justify-between gap-3 mb-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-semibold text-xs">
+                                    {name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <h4 className="m-0 text-foreground text-[13px] font-semibold tracking-wide">{name}</h4>
+                                    {panelist && (
+                                      <span className="text-[10px] text-muted-foreground mt-0.5">
+                                        {PROVIDER_LABELS[panelist.provider]} · {panelist.model}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                {onCopy && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onCopy(text)}
+                                    className="opacity-0 group-hover/response:opacity-100 p-1.5 rounded hover:bg-muted/40 transition-all"
+                                    title="Copy response"
+                                  >
+                                    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                              <div className="text-[13px] leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
+                                <Markdown content={text} />
+                              </div>
+                            </motion.article>
+                          );
+                        })}
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -552,6 +668,19 @@ export default function App() {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
+  const [scrollContainerWidth, setScrollContainerWidth] = useState<number>(0);
+
+  // Measure scroll container width for carousel full-width expansion
+  useEffect(() => {
+    const measureWidth = () => {
+      if (messageListRef.current) {
+        setScrollContainerWidth(messageListRef.current.clientWidth);
+      }
+    };
+    measureWidth();
+    window.addEventListener("resize", measureWidth);
+    return () => window.removeEventListener("resize", measureWidth);
+  }, []);
 
   const messages = conversations[threadId] ?? [];
 
@@ -1922,6 +2051,7 @@ export default function App() {
                     onDelete={() => deleteMessage(index)}
                     onRegenerate={() => openRegenerateModal(index)}
                     onContinueDebate={() => handleContinueDebate(entry.id)}
+                    containerWidth={scrollContainerWidth}
                   />
                 ))}
               </div>
