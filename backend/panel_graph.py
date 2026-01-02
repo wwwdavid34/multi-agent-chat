@@ -57,6 +57,7 @@ class PanelState(TypedDict):
     debate_history: List[DebateRound]  # History of all debate rounds
     step_review: bool  # Whether to pause after each round for user review
     debate_paused: bool  # Whether debate is currently paused waiting for user
+    usage_accumulator: Optional[Dict[str, Any]]  # Accumulated token usage
 
 
 class PanelistConfig(TypedDict):
@@ -126,7 +127,16 @@ class GrokChatRunner:
         content = _extract_grok_content(data)
         if not content:
             raise RuntimeError("Grok returned an empty response")
-        return AIMessage(content=content)
+
+        ai_message = AIMessage(content=content)
+        # Attach usage metadata to match LangChain convention
+        if 'usage' in data:
+            ai_message.usage_metadata = {
+                'input_tokens': data['usage'].get('prompt_tokens', 0),
+                'output_tokens': data['usage'].get('completion_tokens', 0),
+                'total_tokens': data['usage'].get('total_tokens', 0),
+            }
+        return ai_message
 
     async def ainvoke(self, messages: List[AnyMessage]) -> AIMessage:
         payload = {
@@ -146,7 +156,16 @@ class GrokChatRunner:
         content = _extract_grok_content(data)
         if not content:
             raise RuntimeError("Grok returned an empty response")
-        return AIMessage(content=content)
+
+        ai_message = AIMessage(content=content)
+        # Attach usage metadata to match LangChain convention
+        if 'usage' in data:
+            ai_message.usage_metadata = {
+                'input_tokens': data['usage'].get('prompt_tokens', 0),
+                'output_tokens': data['usage'].get('completion_tokens', 0),
+                'total_tokens': data['usage'].get('total_tokens', 0),
+            }
+        return ai_message
 
 
 def _to_openai_messages(messages: Iterable[BaseMessage]) -> List[Dict[str, str]]:
@@ -404,6 +423,10 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
     raw_messages = list(state.get("messages", []))
     history: List[AnyMessage] = [_normalize_message_content(msg) for msg in raw_messages]
 
+    # Debug logging to detect thread contamination
+    thread_id = config.get("configurable", {}).get("thread_id", "unknown") if config else "unknown"
+    logger.info(f"Panelist node - Thread: {thread_id}, Message count: {len(history)}")
+
     summary = state.get("conversation_summary", "")
     if summary:
         history = [SystemMessage(content=f"Previous conversation summary: {summary}")] + history
@@ -487,13 +510,27 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
           for runner, panelist in zip(runners, panel_configs))
     )
 
+    # Initialize or get existing usage accumulator
+    from usage_tracker import create_usage_accumulator, add_to_accumulator
+    usage_acc = state.get("usage_accumulator") or create_usage_accumulator()
+
     for panelist, response in zip(panel_configs, results):
         new_messages.append(response)
         panel_responses[panelist["name"]] = response.content
 
+        # Track usage for this panelist
+        add_to_accumulator(
+            usage_acc, response,
+            model=panelist["model"],
+            provider=panelist["provider"],
+            node_name="panelists",
+            panelist_name=panelist["name"]
+        )
+
     return {
         "messages": new_messages,
         "panel_responses": panel_responses,
+        "usage_accumulator": usage_acc,
     }
 
 
@@ -553,9 +590,15 @@ Examples:
     logger.info(f"Moderator decision: {'SEARCH' if needs_search else 'NO_SEARCH'}")
     logger.info(f"Reasoning: {reasoning}")
 
+    # Track usage
+    from usage_tracker import create_usage_accumulator, add_to_accumulator
+    usage_acc = state.get("usage_accumulator") or create_usage_accumulator()
+    add_to_accumulator(usage_acc, response, model="gpt-4o", provider="openai", node_name="moderator_search_decision")
+
     return {
         "search_results": None,  # Will be filled by search node if needed
         "needs_search": needs_search,
+        "usage_accumulator": usage_acc,
     }
 
 
@@ -637,6 +680,10 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
         f"Panel responses:\n{panel_text}"
     )
 
+    # Get usage accumulator
+    from usage_tracker import create_usage_accumulator, add_to_accumulator
+    usage_acc = state.get("usage_accumulator") or create_usage_accumulator()
+
     # Try with full context first, then progressively truncate on context errors
     truncation_levels = [None, 10, 6, 3]  # None means no truncation
 
@@ -648,9 +695,13 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
                 current_messages + [HumanMessage(content=moderator_prompt)]
             )
 
+            # Track usage
+            add_to_accumulator(usage_acc, response, model="gpt-4o", provider="openai", node_name="moderator")
+
             return {
                 "messages": [response],
                 "summary": response.content,
+                "usage_accumulator": usage_acc,
             }
 
         except Exception as e:
@@ -669,6 +720,7 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
                 return {
                     "messages": [],
                     "summary": "Unable to generate summary due to rate limiting. The API has reached its request limit. Please try again in a moment.",
+                    "usage_accumulator": usage_acc,
                 }
 
             # Check if it's a context length error (retry with truncation)
@@ -686,6 +738,7 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
                     return {
                         "messages": [],
                         "summary": "Unable to generate summary due to context length limitations. Please start a new conversation.",
+                        "usage_accumulator": usage_acc,
                     }
                 else:
                     raise
@@ -706,6 +759,10 @@ async def consensus_checker_node(state: PanelState) -> Dict[str, Any]:
     panel_responses = state.get("panel_responses", {})
     debate_round = state.get("debate_round", 0)
 
+    # Get usage accumulator
+    from usage_tracker import create_usage_accumulator, add_to_accumulator
+    usage_acc = state.get("usage_accumulator") or create_usage_accumulator()
+
     if len(panel_responses) < 2:
         # Can't have meaningful debate with less than 2 panelists; treat as consensus so we can terminate.
         consensus_reached = True
@@ -720,6 +777,7 @@ async def consensus_checker_node(state: PanelState) -> Dict[str, Any]:
             "consensus_reached": consensus_reached,
             "debate_round": debate_round + 1,
             "debate_history": debate_history,
+            "usage_accumulator": usage_acc,
         }
 
     panel_text = "\n\n".join(
@@ -760,6 +818,9 @@ KEY_DISAGREEMENTS: [If NO, list the specific positions that differ]
     response = await moderator_model.ainvoke([HumanMessage(content=consensus_prompt)])
     decision_text = response.content
 
+    # Track usage
+    add_to_accumulator(usage_acc, response, model="gpt-4o", provider="openai", node_name="consensus_checker")
+
     # Parse decision
     consensus_reached = "CONSENSUS: YES" in decision_text.upper()
 
@@ -788,6 +849,7 @@ KEY_DISAGREEMENTS: [If NO, list the specific positions that differ]
         "consensus_reached": consensus_reached,
         "debate_round": debate_round + 1,  # Increment for next round
         "debate_history": debate_history,
+        "usage_accumulator": usage_acc,
     }
 
 
@@ -797,9 +859,12 @@ def pause_for_review(state: PanelState) -> Dict[str, Any]:
     The graph will end here and wait for user to continue.
     """
     logger.info("Debate paused for user review")
+    # Pass through the usage accumulator
+    usage_acc = state.get("usage_accumulator")
     return {
         "debate_paused": True,
         "summary": None,  # Don't generate final summary yet
+        "usage_accumulator": usage_acc,
     }
 
 
@@ -810,12 +875,16 @@ def summarize_conversation(state: PanelState) -> Dict[str, Any]:
     raw_messages = list(state.get("messages", []))
     messages = [_normalize_message_content(msg) for msg in raw_messages]
 
+    # Get usage accumulator
+    from usage_tracker import create_usage_accumulator, add_to_accumulator
+    usage_acc = state.get("usage_accumulator") or create_usage_accumulator()
+
     # Keep last 4 messages
     if len(messages) <= 4:
-        return {}
+        return {"usage_accumulator": usage_acc}
 
     to_summarize = messages[:-4]
-    
+
     # Generate summary
     prompt = (
         f"Current summary: {summary}\n\n"
@@ -823,16 +892,20 @@ def summarize_conversation(state: PanelState) -> Dict[str, Any]:
         "\n".join(f"{m.type}: {m.content}" for m in to_summarize) +
         "\n\nSummarize the new lines into the existing summary."
     )
-    
+
     response = summarizer_model.invoke([HumanMessage(content=prompt)])
     new_summary = response.content
-    
+
+    # Track usage
+    add_to_accumulator(usage_acc, response, model="gpt-4o-mini", provider="openai", node_name="summarize_conversation")
+
     # Delete summarized messages
     delete_messages = [RemoveMessage(id=m.id) for m in to_summarize]
-    
+
     return {
         "conversation_summary": new_summary,
-        "messages": delete_messages
+        "messages": delete_messages,
+        "usage_accumulator": usage_acc,
     }
 
 
@@ -1051,7 +1124,10 @@ def build_panel_graph():
             # in a new event loop in a separate thread
             async def _setup_checkpointer():
                 cm = AsyncPostgresSaver.from_conn_string(pg_url)
-                return await cm.__aenter__()
+                checkpointer = await cm.__aenter__()
+                # CRITICAL: Call setup() to create tables and initialize properly
+                await checkpointer.setup()
+                return checkpointer
 
             def _run_in_new_loop():
                 # Create a new event loop for this thread

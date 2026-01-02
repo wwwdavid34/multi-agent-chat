@@ -180,6 +180,7 @@ async def ask_stream(req: AskRequest, request: Request):
                 "summary": None,
                 "debate_history": [],
                 "debate_paused": False,
+                "usage": None,
             }
 
             # Stream events from the graph
@@ -222,6 +223,20 @@ async def ask_stream(req: AskRequest, request: Request):
                             }
                             yield f"data: {json.dumps(debate_round_event)}\n\n"
 
+                    # Capture usage accumulator from any node that returns it
+                    if "usage_accumulator" in node_output:
+                        accumulated_state["usage"] = node_output["usage_accumulator"]
+
+            # Format usage data for response
+            usage_data = None
+            if accumulated_state["usage"]:
+                usage_data = {
+                    "total_input_tokens": accumulated_state["usage"].get("total_input", 0),
+                    "total_output_tokens": accumulated_state["usage"].get("total_output", 0),
+                    "total_tokens": accumulated_state["usage"].get("total_input", 0) + accumulated_state["usage"].get("total_output", 0),
+                    "call_count": len(accumulated_state["usage"].get("calls", [])),
+                }
+
             # Send the complete result with accumulated state
             # If debate is paused, send partial result without summary
             if accumulated_state["debate_paused"]:
@@ -231,6 +246,7 @@ async def ask_stream(req: AskRequest, request: Request):
                     "panel_responses": accumulated_state["panel_responses"],
                     "debate_history": accumulated_state["debate_history"],
                     "debate_paused": True,
+                    "usage": usage_data,
                 }
                 yield f"data: {json.dumps(result_data)}\n\n"
             elif accumulated_state["summary"]:
@@ -260,8 +276,38 @@ async def ask_stream(req: AskRequest, request: Request):
                         "panel_responses": accumulated_state["panel_responses"],
                         "debate_history": accumulated_state["debate_history"],
                         "debate_paused": False,
+                        "usage": usage_data,
                     }
                     yield f"data: {json.dumps(result_data)}\n\n"
+
+            # Save usage to database
+            if accumulated_state["usage"]:
+                try:
+                    from datetime import datetime
+                    from usage_tracker import get_usage_store, RequestUsage, TokenUsage
+
+                    store = await get_usage_store()
+                    usage_raw = accumulated_state["usage"]
+
+                    request_usage = RequestUsage(
+                        thread_id=req.thread_id,
+                        message_id=f"{req.thread_id}-{int(datetime.now().timestamp() * 1000)}",
+                        total_input_tokens=usage_raw.get("total_input", 0),
+                        total_output_tokens=usage_raw.get("total_output", 0),
+                    )
+                    for call in usage_raw.get("calls", []):
+                        request_usage.call_details.append(TokenUsage(
+                            input_tokens=call.get("input_tokens", 0),
+                            output_tokens=call.get("output_tokens", 0),
+                            model=call.get("model", ""),
+                            provider=call.get("provider", ""),
+                            node_name=call.get("node", ""),
+                        ))
+
+                    await store.save(request_usage)
+                    logger.info(f"Saved usage for thread {req.thread_id}: {usage_raw.get('total_input', 0)} in, {usage_raw.get('total_output', 0)} out")
+                except Exception as e:
+                    logger.warning(f"Failed to save usage data: {e}")
 
             # Send completion event
             print(f"[EVENT_STREAM] Sending done event for thread {req.thread_id}", flush=True)
@@ -332,6 +378,27 @@ async def get_storage_info() -> dict[str, str]:
     conversations will persist across restarts.
     """
     return get_storage_mode()
+
+
+@app.get("/usage/{thread_id}")
+async def get_thread_usage(thread_id: str):
+    """Get usage statistics for a thread."""
+    from usage_tracker import get_usage_store
+
+    store = await get_usage_store()
+    usages = await store.get_by_thread(thread_id)
+
+    total_input = sum(u.total_input_tokens for u in usages)
+    total_output = sum(u.total_output_tokens for u in usages)
+
+    return {
+        "thread_id": thread_id,
+        "message_count": len(usages),
+        "total_input_tokens": total_input,
+        "total_output_tokens": total_output,
+        "total_tokens": total_input + total_output,
+        "messages": [u.to_dict() for u in usages],
+    }
 
 
 # Serve static frontend files (built by Vite)

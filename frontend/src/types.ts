@@ -30,11 +30,19 @@ export interface ProviderModelStatus {
 
 export type ProviderModelStatusMap = Partial<Record<LLMProvider, ProviderModelStatus>>;
 
+export interface TokenUsage {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  call_count?: number;
+}
+
 export interface AskResponse {
   thread_id: string;
   summary: string;
   panel_responses: PanelResponses;
   debate_history?: DebateRound[];
+  usage?: TokenUsage;
 }
 
 export interface AskRequestBody {

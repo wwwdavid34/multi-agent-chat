@@ -18,6 +18,7 @@ import type {
   ProviderKeyMap,
   ProviderModelsMap,
   ProviderModelStatusMap,
+  TokenUsage,
 } from "./types";
 
 const DEFAULT_THREAD_ID = "demo-thread";
@@ -40,6 +41,7 @@ interface MessageEntry {
   step_review?: boolean; // Whether to show rounds step-by-step
   debate_paused?: boolean; // Whether debate is paused waiting for user to continue
   stopped?: boolean; // Whether generation was stopped by user
+  usage?: TokenUsage; // Token usage statistics for this exchange
 }
 
 const parseJSON = <T,>(value: string | null, fallback: T): T => {
@@ -196,6 +198,21 @@ const MessageBubble = memo(function MessageBubble({
                   </svg>
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
                     Quick Response
+                  </span>
+                </div>
+              )}
+
+              {/* Token usage badge */}
+              {entry.usage && entry.usage.total_tokens > 0 && (
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 border border-border/40" title={`${entry.usage.total_input_tokens.toLocaleString()} input + ${entry.usage.total_output_tokens.toLocaleString()} output tokens`}>
+                  <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <span className="text-[10px] font-medium text-muted-foreground">
+                    {entry.usage.total_tokens >= 1000
+                      ? `${(entry.usage.total_tokens / 1000).toFixed(1)}K`
+                      : entry.usage.total_tokens} tokens
                   </span>
                 </div>
               )}
@@ -906,6 +923,7 @@ export default function App() {
                         panel_responses: result.panel_responses || entry.panel_responses,
                         debate_history: entry.debate_history,
                         debate_paused: true,
+                        usage: result.usage || entry.usage,
                       }
                     : entry
                 ) ?? [],
@@ -929,6 +947,7 @@ export default function App() {
                         // Keep accumulated debate history from streaming (onDebateRound)
                         debate_history: entry.debate_history,
                         debate_paused: false,
+                        usage: result.usage,
                       }
                     : entry
                 ) ?? [],
@@ -1052,6 +1071,7 @@ export default function App() {
                         ...e,
                         panel_responses: result.panel_responses || e.panel_responses,
                         debate_paused: true,
+                        usage: result.usage || e.usage,
                       }
                     : e
                 ) ?? [],
@@ -1073,6 +1093,7 @@ export default function App() {
                         summary: result.summary,
                         panel_responses: result.panel_responses,
                         debate_paused: false,
+                        usage: result.usage,
                       }
                     : e
                 ) ?? [],
