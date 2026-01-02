@@ -362,7 +362,7 @@ const MessageBubble = memo(function MessageBubble({
                   >
                     <div className={
                       viewMode === "grid"
-                        ? "relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-[100vw] pl-4 pr-8 sm:pl-6 sm:pr-10 md:pl-8 md:pr-12 lg:pl-12 lg:pr-16 xl:pl-16 xl:pr-24 2xl:pl-20 2xl:pr-28 flex flex-wrap justify-center gap-4"
+                        ? "relative left-1/2 right-1/2 -ml-[calc(50vw-0.5rem)] -mr-[calc(50vw-0.5rem)] w-[calc(100vw-1rem)] px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 2xl:px-20 flex flex-wrap justify-center gap-4"
                         : "flex flex-col gap-4"
                     }>
                     {Object.entries(entry.panel_responses).map(([name, text], idx) => {
