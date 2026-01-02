@@ -686,6 +686,23 @@ export default function App() {
             onSearchSource: (source) => {
               setSearchSources((prev) => [...prev, source]);
             },
+            onPanelistResponse: (panelist, response) => {
+              // Update the entry with the individual panelist response
+              setConversations((prev) => ({
+                ...prev,
+                [threadId]: prev[threadId]?.map((entry) =>
+                  entry.id === entryId
+                    ? {
+                        ...entry,
+                        panel_responses: {
+                          ...entry.panel_responses,
+                          [panelist]: response,
+                        },
+                      }
+                    : entry
+                ) ?? [],
+              }));
+            },
             onResult: (result) => {
               // Update the entry with the actual response
               setConversations((prev) => ({

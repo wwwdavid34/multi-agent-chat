@@ -119,6 +119,10 @@ async def ask_stream(req: AskRequest):
             "needs_search": False,
         }
 
+        # Create an event queue for streaming individual panelist responses
+        import asyncio
+        event_queue = asyncio.Queue()
+
         config = {
             "configurable": {
                 "thread_id": req.thread_id,
@@ -126,6 +130,7 @@ async def ask_stream(req: AskRequest):
                 if req.panelists
                 else None,
                 "provider_keys": {k: v for k, v in (req.provider_keys or {}).items() if v},
+                "event_queue": event_queue,
             }
         }
 
@@ -145,27 +150,60 @@ async def ask_stream(req: AskRequest):
                 "summary": None,
             }
 
-            # Stream events from the graph
-            async for event in panel_graph.astream(state, config=config):
-                for node_name, node_output in event.items():
-                    # Send status update for each node
-                    if node_name in node_status_map:
-                        status_message = node_status_map[node_name]
-                        yield f"data: {json.dumps({'type': 'status', 'message': status_message})}\n\n"
+            # Create a background task to run the graph
+            graph_complete = asyncio.Event()
 
-                    # Stream search sources from search node
-                    if node_name == "search" and "search_sources" in node_output:
-                        search_sources = node_output["search_sources"]
-                        for source in search_sources:
-                            yield f"data: {json.dumps({'type': 'search_source', 'url': source['url'], 'title': source['title']})}\n\n"
+            async def run_graph():
+                """Run the graph and process node events."""
+                try:
+                    async for event in panel_graph.astream(state, config=config):
+                        for node_name, node_output in event.items():
+                            # Send status update for each node
+                            if node_name in node_status_map:
+                                status_message = node_status_map[node_name]
+                                await event_queue.put({
+                                    "type": "status",
+                                    "message": status_message,
+                                })
 
-                    # Accumulate panel_responses from panelists node
-                    if node_name == "panelists" and "panel_responses" in node_output:
-                        accumulated_state["panel_responses"].update(node_output["panel_responses"])
+                            # Stream search sources from search node
+                            if node_name == "search" and "search_sources" in node_output:
+                                search_sources = node_output["search_sources"]
+                                for source in search_sources:
+                                    await event_queue.put({
+                                        "type": "search_source",
+                                        "url": source["url"],
+                                        "title": source["title"],
+                                    })
 
-                    # Get summary from moderator node
-                    if node_name == "moderator" and "summary" in node_output:
-                        accumulated_state["summary"] = node_output["summary"]
+                            # Accumulate panel_responses from panelists node
+                            if node_name == "panelists" and "panel_responses" in node_output:
+                                accumulated_state["panel_responses"].update(node_output["panel_responses"])
+
+                            # Get summary from moderator node
+                            if node_name == "moderator" and "summary" in node_output:
+                                accumulated_state["summary"] = node_output["summary"]
+                finally:
+                    graph_complete.set()
+
+            # Start graph execution in background
+            graph_task = asyncio.create_task(run_graph())
+
+            # Stream events from the queue as they arrive
+            while not graph_complete.is_set() or not event_queue.empty():
+                try:
+                    # Wait for events with a timeout to check if graph is complete
+                    event_data = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+
+                    # Emit the event
+                    yield f"data: {json.dumps(event_data)}\n\n"
+
+                except asyncio.TimeoutError:
+                    # No event available, continue waiting
+                    continue
+
+            # Wait for graph task to complete (should already be done)
+            await graph_task
 
             # Send the complete result with accumulated state
             if accumulated_state["summary"]:

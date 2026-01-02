@@ -345,13 +345,32 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
 
     runners = [_build_runner(p, provider_keys) for p in panel_configs]
 
-    # Run all panelists in parallel with retry logic for context errors
-    results = await asyncio.gather(
-        *(_invoke_with_retry(runner, history, panelist["name"])
-          for runner, panelist in zip(runners, panel_configs))
-    )
+    # Get the event queue for streaming individual responses (if provided)
+    event_queue = config.get("configurable", {}).get("event_queue") if config else None
 
-    for panelist, response in zip(panel_configs, results):
+    # Run all panelists in parallel and stream responses as they complete
+    # Create task-to-panelist mapping
+    tasks = {
+        asyncio.create_task(_invoke_with_retry(runner, history, panelist["name"])): panelist
+        for runner, panelist in zip(runners, panel_configs)
+    }
+
+    # Use as_completed to get results as they finish
+    for completed_task in asyncio.as_completed(tasks.keys()):
+        response = await completed_task
+        panelist = tasks[completed_task]
+
+        # Emit response immediately if streaming
+        if event_queue:
+            try:
+                await event_queue.put({
+                    "type": "panelist_response",
+                    "panelist": panelist["name"],
+                    "response": response.content,
+                })
+            except Exception as e:
+                logger.warning(f"Failed to queue panelist response: {e}")
+
         new_messages.append(response)
         panel_responses[panelist["name"]] = response.content
 

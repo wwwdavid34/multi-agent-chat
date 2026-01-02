@@ -30,6 +30,7 @@ export async function askPanelStream(
   callbacks: {
     onStatus?: (message: string) => void;
     onSearchSource?: (source: SearchSource) => void;
+    onPanelistResponse?: (panelist: string, response: string) => void;
     onResult?: (result: AskResponse) => void;
     onError?: (error: Error) => void;
   }
@@ -80,6 +81,8 @@ export async function askPanelStream(
                 url: event.url,
                 title: event.title,
               });
+            } else if (event.type === "panelist_response" && callbacks.onPanelistResponse) {
+              callbacks.onPanelistResponse(event.panelist, event.response);
             } else if (event.type === "result" && callbacks.onResult) {
               callbacks.onResult({
                 thread_id: event.thread_id,
