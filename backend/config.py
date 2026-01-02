@@ -96,6 +96,16 @@ def get_grok_api_key() -> str:
 
 
 @lru_cache(maxsize=None)
+def get_tavily_api_key() -> str:
+    """Return the Tavily API key for web search."""
+
+    value = _optional_env("TAVILY_API_KEY")
+    if not value:
+        raise RuntimeError("Set TAVILY_API_KEY to enable web search functionality")
+    return value
+
+
+@lru_cache(maxsize=None)
 def use_in_memory_checkpointer() -> bool:
     """Return True when an in-memory LangGraph checkpointer should be used."""
 

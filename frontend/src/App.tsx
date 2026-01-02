@@ -60,6 +60,7 @@ const MessageBubble = memo(function MessageBubble({
   isLatest = false,
   messageRef,
   loadingStatus = "Panel is thinking...",
+  searchSources = [],
   onCopy,
   onDelete,
   onRegenerate,
@@ -69,6 +70,7 @@ const MessageBubble = memo(function MessageBubble({
   isLatest?: boolean;
   messageRef?: React.RefObject<HTMLDivElement>;
   loadingStatus?: string;
+  searchSources?: Array<{ url: string; title: string }>;
   onCopy?: (text: string) => void;
   onDelete?: () => void;
   onRegenerate?: () => void;
@@ -298,30 +300,72 @@ const MessageBubble = memo(function MessageBubble({
               </AnimatePresence>
             </>
           ) : (
-            <div className="flex items-center gap-3">
-              <motion.div
-                className="flex gap-1.5"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.3 }}
-              >
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
                 <motion.div
-                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0 }}
-                />
+                  className="flex gap-1.5"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <motion.div
+                    className="w-2 h-2 rounded-full bg-muted-foreground/40"
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                    transition={{ duration: 1.2, repeat: Infinity, delay: 0 }}
+                  />
+                  <motion.div
+                    className="w-2 h-2 rounded-full bg-muted-foreground/40"
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                    transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }}
+                  />
+                  <motion.div
+                    className="w-2 h-2 rounded-full bg-muted-foreground/40"
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
+                    transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
+                  />
+                </motion.div>
+                <span className="text-[13px] text-muted-foreground/60">{loadingStatus}</span>
+              </div>
+
+              {/* Display search sources with favicons */}
+              {searchSources.length > 0 && (
                 <motion.div
-                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }}
-                />
-                <motion.div
-                  className="w-2 h-2 rounded-full bg-muted-foreground/40"
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
-                />
-              </motion.div>
-              <span className="text-[13px] text-muted-foreground/60">{loadingStatus}</span>
+                  className="flex flex-wrap gap-2 ml-7"
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  {searchSources.map((source, index) => {
+                    const domain = new URL(source.url).hostname;
+                    const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+
+                    return (
+                      <motion.a
+                        key={index}
+                        href={source.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-muted/50 hover:bg-muted/80 transition-colors text-xs text-muted-foreground max-w-[200px]"
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.2, delay: index * 0.05 }}
+                        title={source.title}
+                      >
+                        <img
+                          src={faviconUrl}
+                          alt=""
+                          className="w-4 h-4 flex-shrink-0"
+                          onError={(e) => {
+                            // Fallback to a generic icon if favicon fails to load
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                        <span className="truncate">{source.title}</span>
+                      </motion.a>
+                    );
+                  })}
+                </motion.div>
+              )}
             </div>
           )}
         </motion.div>
@@ -374,6 +418,7 @@ export default function App() {
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState<string>("Panel is thinking...");
+  const [searchSources, setSearchSources] = useState<Array<{ url: string; title: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(() => {
@@ -604,6 +649,7 @@ export default function App() {
 
       setLoading(true);
       setError(null);
+      setSearchSources([]); // Clear previous search sources
 
       const sanitizedQuestion = question.trim() || "See attached images.";
       const entryId = `${threadId}-${Date.now()}`;
@@ -636,6 +682,9 @@ export default function App() {
           {
             onStatus: (message) => {
               setLoadingStatus(message);
+            },
+            onSearchSource: (source) => {
+              setSearchSources((prev) => [...prev, source]);
             },
             onResult: (result) => {
               // Update the entry with the actual response
@@ -1313,6 +1362,7 @@ export default function App() {
                     isLatest={index === messages.length - 1}
                     messageRef={index === messages.length - 1 ? latestMessageRef : undefined}
                     loadingStatus={loadingStatus}
+                    searchSources={index === messages.length - 1 ? searchSources : []}
                     onCopy={copyToClipboard}
                     onDelete={() => deleteMessage(index)}
                     onRegenerate={() => regenerateMessage(index)}

@@ -36,6 +36,7 @@ class PanelState(TypedDict):
     summary: Optional[str]
     conversation_summary: str
     search_results: Optional[str]  # Web search results shared among panelists
+    search_sources: List[Dict[str, str]]  # URLs and titles from web search for UI display
     needs_search: bool  # Whether moderator determined search is needed
 
 
@@ -425,55 +426,64 @@ async def search_node(state: PanelState) -> Dict[str, Any]:
     messages = state.get("messages", [])
     user_messages = [m for m in messages if isinstance(m, HumanMessage)]
     if not user_messages:
-        return {"search_results": None}
+        return {"search_results": None, "search_sources": []}
 
     latest_question = user_messages[-1].content
 
     logger.info(f"Performing web search for: {latest_question}")
 
     try:
-        # Initialize Tavily search
-        from langchain_tavily import TavilySearch
+        # Use Tavily client directly to get structured results
+        from tavily import TavilyClient
+        from config import get_tavily_api_key
 
-        search_tool = TavilySearch(
+        client = TavilyClient(api_key=get_tavily_api_key())
+
+        # Use async search with structured results
+        response = await asyncio.to_thread(
+            client.search,
+            query=latest_question,
             max_results=5,
-            include_answer=True,
             include_raw_content=True,
             search_depth="advanced",
         )
 
-        results = await search_tool.ainvoke(latest_question)
+        # Extract sources for UI display (with favicons)
+        sources = []
+        results_list = response.get("results", [])
 
-        # TavilySearch returns a formatted string directly
-        if isinstance(results, str):
-            formatted_results = f"=== WEB SEARCH RESULTS ===\n\n"
-            formatted_results += f"Query: {latest_question}\n\n"
-            formatted_results += results
-        else:
-            # Handle list/dict format (fallback)
-            formatted_results = "=== WEB SEARCH RESULTS ===\n\n"
-            formatted_results += f"Query: {latest_question}\n"
+        for result in results_list:
+            if isinstance(result, dict) and "url" in result and "title" in result:
+                sources.append({
+                    "url": result["url"],
+                    "title": result["title"],
+                })
 
-            if isinstance(results, list):
-                formatted_results += f"Found {len(results)} sources\n\n"
-                for i, result in enumerate(results, 1):
-                    if isinstance(result, dict):
-                        formatted_results += f"## Source {i}: {result.get('title', 'Untitled')}\n"
-                        formatted_results += f"URL: {result.get('url', 'N/A')}\n"
-                        formatted_results += f"\nContent:\n{result.get('content', '')}\n"
-                        formatted_results += "\n" + "="*50 + "\n\n"
-                    else:
-                        formatted_results += f"{result}\n\n"
-            else:
-                formatted_results += f"{results}\n"
+        # Format results for panelists (same as before)
+        formatted_results = f"=== WEB SEARCH RESULTS ===\n\n"
+        formatted_results += f"Query: {latest_question}\n"
+        formatted_results += f"Found {len(results_list)} sources\n\n"
 
-        logger.info("Search completed successfully")
-        return {"search_results": formatted_results}
+        for i, result in enumerate(results_list, 1):
+            if isinstance(result, dict):
+                formatted_results += f"## Source {i}: {result.get('title', 'Untitled')}\n"
+                formatted_results += f"URL: {result.get('url', 'N/A')}\n"
+                formatted_results += f"\nContent:\n{result.get('content', '')}\n"
+                formatted_results += "\n" + "="*50 + "\n\n"
+
+        logger.info(f"Search completed successfully with {len(sources)} sources")
+        return {
+            "search_results": formatted_results,
+            "search_sources": sources,
+        }
 
     except Exception as e:
         logger.error(f"Search failed: {e}")
         error_msg = f"Search attempted but failed: {str(e)}\nPlease answer based on your general knowledge."
-        return {"search_results": error_msg}
+        return {
+            "search_results": error_msg,
+            "search_sources": [],
+        }
 
 
 def moderator_node(state: PanelState) -> Dict[str, object]:

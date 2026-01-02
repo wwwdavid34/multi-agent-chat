@@ -153,6 +153,12 @@ async def ask_stream(req: AskRequest):
                         status_message = node_status_map[node_name]
                         yield f"data: {json.dumps({'type': 'status', 'message': status_message})}\n\n"
 
+                    # Stream search sources from search node
+                    if node_name == "search" and "search_sources" in node_output:
+                        search_sources = node_output["search_sources"]
+                        for source in search_sources:
+                            yield f"data: {json.dumps({'type': 'search_source', 'url': source['url'], 'title': source['title']})}\n\n"
+
                     # Accumulate panel_responses from panelists node
                     if node_name == "panelists" and "panel_responses" in node_output:
                         accumulated_state["panel_responses"].update(node_output["panel_responses"])

@@ -17,6 +17,11 @@ export async function askPanel(body: AskRequestBody): Promise<AskResponse> {
   return (await res.json()) as AskResponse;
 }
 
+export interface SearchSource {
+  url: string;
+  title: string;
+}
+
 /**
  * Stream-based API call with real-time status updates
  */
@@ -24,6 +29,7 @@ export async function askPanelStream(
   body: AskRequestBody,
   callbacks: {
     onStatus?: (message: string) => void;
+    onSearchSource?: (source: SearchSource) => void;
     onResult?: (result: AskResponse) => void;
     onError?: (error: Error) => void;
   }
@@ -69,6 +75,11 @@ export async function askPanelStream(
 
             if (event.type === "status" && callbacks.onStatus) {
               callbacks.onStatus(event.message);
+            } else if (event.type === "search_source" && callbacks.onSearchSource) {
+              callbacks.onSearchSource({
+                url: event.url,
+                title: event.title,
+              });
             } else if (event.type === "result" && callbacks.onResult) {
               callbacks.onResult({
                 thread_id: event.thread_id,
