@@ -354,16 +354,17 @@ const MessageBubble = memo(function MessageBubble({
               <AnimatePresence>
                 {entry.expanded && (
                   <motion.div
-                    className={`mt-6 border-t border-border/50 pt-6 ${
-                      viewMode === "grid"
-                        ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 -mx-4 sm:-mx-6 md:-mx-8 lg:-mx-12 xl:-mx-16 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16"
-                        : "flex flex-col gap-4"
-                    }`}
+                    className={viewMode === "grid" ? "mt-6 border-t border-border/50 pt-6" : "mt-6 border-t border-border/50 pt-6"}
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                   >
+                    <div className={
+                      viewMode === "grid"
+                        ? "relative left-1/2 right-1/2 -mx-[50vw] w-screen px-4 sm:px-6 md:px-8 lg:px-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                        : "flex flex-col gap-4"
+                    }>
                     {Object.entries(entry.panel_responses).map(([name, text], idx) => {
                       // Find the panelist config to show model info
                       const panelist = entry.panelists.find((p) => p.name === name);
@@ -409,6 +410,7 @@ const MessageBubble = memo(function MessageBubble({
                       </motion.article>
                       );
                     })}
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>
