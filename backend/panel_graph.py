@@ -531,16 +531,19 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
     usage_acc = state.get("usage_accumulator") or create_usage_accumulator()
 
     # Run all panelists in parallel and stream responses as they complete
-    # Create task-to-panelist mapping with personalized history
-    tasks = {
-        asyncio.create_task(_invoke_with_retry(runner, _personalize_history(panelist["name"]), panelist["name"])): panelist
+    # Create tasks that return (panelist, response) tuples
+    async def invoke_panelist(runner, panelist):
+        response = await _invoke_with_retry(runner, _personalize_history(panelist["name"]), panelist["name"])
+        return (panelist, response)
+
+    tasks = [
+        asyncio.create_task(invoke_panelist(runner, panelist))
         for runner, panelist in zip(runners, panel_configs)
-    }
+    ]
 
     # Use as_completed to get results as they finish
-    for completed_task in asyncio.as_completed(tasks.keys()):
-        response = await completed_task
-        panelist = tasks[completed_task]
+    for coro in asyncio.as_completed(tasks):
+        panelist, response = await coro
 
         # Emit response immediately if streaming
         if event_queue:
