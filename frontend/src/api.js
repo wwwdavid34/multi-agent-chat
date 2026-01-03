@@ -49,6 +49,15 @@ export async function askPanelStream(body, callbacks, signal) {
                         if (event.type === "status" && callbacks.onStatus) {
                             callbacks.onStatus(event.message);
                         }
+                        else if (event.type === "search_source" && callbacks.onSearchSource) {
+                            callbacks.onSearchSource({
+                                url: event.url,
+                                title: event.title,
+                            });
+                        }
+                        else if (event.type === "panelist_response" && callbacks.onPanelistResponse) {
+                            callbacks.onPanelistResponse(event.panelist, event.response);
+                        }
                         else if (event.type === "debate_round" && callbacks.onDebateRound) {
                             callbacks.onDebateRound(event.round);
                         }

@@ -1,10 +1,16 @@
 import type { AskRequestBody, AskResponse, DebateRound } from "./types";
 export declare function askPanel(body: AskRequestBody): Promise<AskResponse>;
+export interface SearchSource {
+    url: string;
+    title: string;
+}
 /**
  * Stream-based API call with real-time status updates
  */
 export declare function askPanelStream(body: AskRequestBody, callbacks: {
     onStatus?: (message: string) => void;
+    onSearchSource?: (source: SearchSource) => void;
+    onPanelistResponse?: (panelist: string, response: string) => void;
     onDebateRound?: (round: DebateRound) => void;
     onResult?: (result: AskResponse) => void;
     onDebatePaused?: (result: Partial<AskResponse>) => void;
