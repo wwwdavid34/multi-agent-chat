@@ -1,0 +1,35 @@
+version: '3.8'
+
+# Multi-Agent Chat Panel - External Database Configuration
+#
+# Use this configuration when you have an external PostgreSQL database
+# (e.g., AWS RDS, Google Cloud SQL, Azure Database, or self-hosted)
+#
+# Usage:
+#   1. Set PG_CONN_STR in your .env file to point to your external database
+#   2. Run: docker-compose -f docker-compose.external-db.yml up -d
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-agent-panel-app
+    ports:
+      - "${APP_PORT:-8080}:8000"
+    environment:
+      # PostgreSQL connection - REQUIRED: Set this in .env
+      PG_CONN_STR: ${PG_CONN_STR}
+
+      # API Keys - All optional (app supports BYOK mode)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GROK_API_KEY: ${GROK_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+
+      # Use in-memory storage (set to 1 to skip database)
+      USE_IN_MEMORY_CHECKPOINTER: ${USE_IN_MEMORY_CHECKPOINTER:-0}
+    restart: unless-stopped

@@ -305,9 +305,27 @@ PROVIDER_FACTORIES: Dict[str, ProviderFactory] = {
 }
 
 
-get_openai_api_key()
-summarizer_model = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, api_key=get_openai_api_key())
-moderator_model = ChatOpenAI(model="gpt-4o", temperature=0.1, api_key=get_openai_api_key())
+# Lazy-initialized models (created on first use to support BYOK mode)
+_summarizer_model: Optional[ChatOpenAI] = None
+_moderator_model: Optional[ChatOpenAI] = None
+
+
+def _get_summarizer_model() -> ChatOpenAI:
+    """Lazy initialization of summarizer model."""
+    global _summarizer_model
+    if _summarizer_model is None:
+        _summarizer_model = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, api_key=get_openai_api_key())
+    return _summarizer_model
+
+
+def _get_moderator_model() -> ChatOpenAI:
+    """Lazy initialization of moderator model."""
+    global _moderator_model
+    if _moderator_model is None:
+        _moderator_model = ChatOpenAI(model="gpt-4o", temperature=0.1, api_key=get_openai_api_key())
+    return _moderator_model
+
+
 
 
 def _truncate_messages(messages: List[AnyMessage], max_recent: int = 10) -> List[AnyMessage]:
@@ -576,7 +594,7 @@ Examples:
 - "Current weather in Tokyo" → SEARCH (real-time data)
 """
 
-    response = await moderator_model.ainvoke([HumanMessage(content=decision_prompt)])
+    response = await _get_moderator_model().ainvoke([HumanMessage(content=decision_prompt)])
     decision_text = response.content
 
     # Parse decision
@@ -691,7 +709,7 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
         try:
             current_messages = messages if max_messages is None else _truncate_messages(messages, max_messages)
 
-            response = moderator_model.invoke(
+            response = _get_moderator_model().invoke(
                 current_messages + [HumanMessage(content=moderator_prompt)]
             )
 
@@ -815,7 +833,7 @@ REASONING: [Explain whether they took clear stances and if those stances align]
 KEY_DISAGREEMENTS: [If NO, list the specific positions that differ]
 """
 
-    response = await moderator_model.ainvoke([HumanMessage(content=consensus_prompt)])
+    response = await _get_moderator_model().ainvoke([HumanMessage(content=consensus_prompt)])
     decision_text = response.content
 
     # Track usage
@@ -893,7 +911,7 @@ def summarize_conversation(state: PanelState) -> Dict[str, Any]:
         "\n\nSummarize the new lines into the existing summary."
     )
 
-    response = summarizer_model.invoke([HumanMessage(content=prompt)])
+    response = _get_summarizer_model().invoke([HumanMessage(content=prompt)])
     new_summary = response.content
 
     # Track usage
