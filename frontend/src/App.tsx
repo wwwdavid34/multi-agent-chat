@@ -76,6 +76,7 @@ const MessageBubble = memo(function MessageBubble({
   loadingStatus = "Panel is thinking...",
   status,
   statusTrail,
+  searchSources = [],
   onCopy,
   onDelete,
   onRegenerate,
@@ -89,6 +90,7 @@ const MessageBubble = memo(function MessageBubble({
   loadingStatus?: string;
   status?: string;
   statusTrail?: string[];
+  searchSources?: Array<{ url: string; title: string }>;
   onCopy?: (text: string) => void;
   onDelete?: () => void;
   onRegenerate?: () => void;
@@ -579,6 +581,46 @@ const MessageBubble = memo(function MessageBubble({
                   {statusTrailText}
                 </div>
               )}
+
+              {/* Display search sources with favicons */}
+              {searchSources.length > 0 && (
+                <motion.div
+                  className="flex flex-wrap gap-2 ml-7"
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  {searchSources.map((source, index) => {
+                    const domain = new URL(source.url).hostname;
+                    const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+
+                    return (
+                      <motion.a
+                        key={index}
+                        href={source.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-muted/50 hover:bg-muted/80 transition-colors text-xs text-muted-foreground max-w-[200px]"
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.2, delay: index * 0.05 }}
+                        title={source.title}
+                      >
+                        <img
+                          src={faviconUrl}
+                          alt=""
+                          className="w-4 h-4 flex-shrink-0"
+                          onError={(e) => {
+                            // Fallback to a generic icon if favicon fails to load
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                        <span className="truncate">{source.title}</span>
+                      </motion.a>
+                    );
+                  })}
+                </motion.div>
+              )}
             </div>
           )}
         </motion.div>
@@ -639,6 +681,7 @@ export default function App() {
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [statusByEntryId, setStatusByEntryId] = useState<Record<string, string>>({});
   const [statusTrailByEntryId, setStatusTrailByEntryId] = useState<Record<string, string[]>>({});
+  const [searchSources, setSearchSources] = useState<Array<{ url: string; title: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -978,6 +1021,7 @@ export default function App() {
 
       setLoading(true);
       setError(null);
+      setSearchSources([]); // Clear previous search sources
 
       // Create abort controller for this request
       const controller = new AbortController();
@@ -1065,6 +1109,26 @@ export default function App() {
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
               setActiveEntryId(null);
+            },
+            onSearchSource: (source) => {
+              setSearchSources((prev) => [...prev, source]);
+            },
+            onPanelistResponse: (panelist, response) => {
+              // Update the entry with the individual panelist response
+              setConversations((prev) => ({
+                ...prev,
+                [threadId]: prev[threadId]?.map((entry) =>
+                  entry.id === entryId
+                    ? {
+                        ...entry,
+                        panel_responses: {
+                          ...entry.panel_responses,
+                          [panelist]: response,
+                        },
+                      }
+                    : entry
+                ) ?? [],
+              }));
             },
             onResult: (result) => {
               clearEntryStatus(entryId);
@@ -2047,6 +2111,7 @@ export default function App() {
                     loadingStatus={loadingStatus}
                     status={statusByEntryId[entry.id]}
                     statusTrail={statusTrailByEntryId[entry.id]}
+                    searchSources={index === messages.length - 1 ? searchSources : []}
                     onCopy={copyToClipboard}
                     onDelete={() => deleteMessage(index)}
                     onRegenerate={() => openRegenerateModal(index)}

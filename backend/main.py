@@ -142,6 +142,10 @@ async def ask_stream(req: AskRequest, request: Request):
                 "debate_paused": False,
             }
 
+        # Create an event queue for streaming individual panelist responses
+        import asyncio
+        event_queue = asyncio.Queue()
+
         config = {
             "configurable": {
                 "thread_id": req.thread_id,
@@ -149,6 +153,7 @@ async def ask_stream(req: AskRequest, request: Request):
                 if req.panelists
                 else None,
                 "provider_keys": {k: v for k, v in (req.provider_keys or {}).items() if v},
+                "event_queue": event_queue,
             }
         }
 
@@ -183,49 +188,83 @@ async def ask_stream(req: AskRequest, request: Request):
                 "usage": None,
             }
 
-            # Stream events from the graph
-            # Note: request.is_disconnected() doesn't work reliably for SSE streams
-            # Instead we rely on CancelledError being raised when client disconnects
+            # Create a background task to run the graph
+            graph_complete = asyncio.Event()
             print(f"[STREAM] Starting graph stream for thread {req.thread_id}", flush=True)
 
-            async for event in panel_graph.astream(state, config=config):
-                print(f"[STREAM] Got event with nodes: {list(event.keys())}", flush=True)
+            async def run_graph():
+                """Run the graph and process node events."""
+                try:
+                    async for event in panel_graph.astream(state, config=config):
+                        print(f"[STREAM] Got event with nodes: {list(event.keys())}", flush=True)
 
-                for node_name, node_output in event.items():
+                        for node_name, node_output in event.items():
+                            # Send status update for each node
+                            if node_name in node_status_map:
+                                status_message = node_status_map[node_name]
+                                await event_queue.put({
+                                    "type": "status",
+                                    "message": status_message,
+                                })
 
-                    # Send status update for each node
-                    if node_name in node_status_map:
-                        status_message = node_status_map[node_name]
-                        yield f"data: {json.dumps({'type': 'status', 'message': status_message})}\n\n"
+                            # Stream search sources from search node
+                            if node_name == "search" and "search_sources" in node_output:
+                                search_sources = node_output["search_sources"]
+                                for source in search_sources:
+                                    await event_queue.put({
+                                        "type": "search_source",
+                                        "url": source["url"],
+                                        "title": source["title"],
+                                    })
 
-                    # Accumulate panel_responses from panelists node
-                    if node_name == "panelists" and "panel_responses" in node_output:
-                        accumulated_state["panel_responses"].update(node_output["panel_responses"])
+                            # Accumulate panel_responses from panelists node
+                            if node_name == "panelists" and "panel_responses" in node_output:
+                                accumulated_state["panel_responses"].update(node_output["panel_responses"])
 
-                    # Get summary from moderator node
-                    if node_name == "moderator" and "summary" in node_output:
-                        accumulated_state["summary"] = node_output["summary"]
+                            # Get summary from moderator node
+                            if node_name == "moderator" and "summary" in node_output:
+                                accumulated_state["summary"] = node_output["summary"]
 
-                    # Track if debate is paused for user review
-                    if node_name == "pause_for_review":
-                        accumulated_state["debate_paused"] = node_output.get("debate_paused", False)
-                        logger.info("Debate paused - waiting for user to continue")
+                            # Track if debate is paused for user review
+                            if node_name == "pause_for_review":
+                                accumulated_state["debate_paused"] = node_output.get("debate_paused", False)
+                                logger.info("Debate paused - waiting for user to continue")
 
-                    # Emit debate round events when consensus_checker completes
-                    if node_name == "consensus_checker" and "debate_history" in node_output:
-                        accumulated_state["debate_history"] = node_output["debate_history"]
-                        # Send the latest debate round to the frontend
-                        if node_output["debate_history"]:
-                            latest_round = node_output["debate_history"][-1]
-                            debate_round_event = {
-                                "type": "debate_round",
-                                "round": latest_round,
-                            }
-                            yield f"data: {json.dumps(debate_round_event)}\n\n"
+                            # Emit debate round events when consensus_checker completes
+                            if node_name == "consensus_checker" and "debate_history" in node_output:
+                                accumulated_state["debate_history"] = node_output["debate_history"]
+                                # Send the latest debate round to the frontend
+                                if node_output["debate_history"]:
+                                    latest_round = node_output["debate_history"][-1]
+                                    await event_queue.put({
+                                        "type": "debate_round",
+                                        "round": latest_round,
+                                    })
 
-                    # Capture usage accumulator from any node that returns it
-                    if "usage_accumulator" in node_output:
-                        accumulated_state["usage"] = node_output["usage_accumulator"]
+                            # Capture usage accumulator from any node that returns it
+                            if "usage_accumulator" in node_output:
+                                accumulated_state["usage"] = node_output["usage_accumulator"]
+                finally:
+                    graph_complete.set()
+
+            # Start graph execution in background
+            graph_task = asyncio.create_task(run_graph())
+
+            # Stream events from the queue as they arrive
+            while not graph_complete.is_set() or not event_queue.empty():
+                try:
+                    # Wait for events with a timeout to check if graph is complete
+                    event_data = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+
+                    # Emit the event
+                    yield f"data: {json.dumps(event_data)}\n\n"
+
+                except asyncio.TimeoutError:
+                    # No event available, continue waiting
+                    continue
+
+            # Wait for graph task to complete (should already be done)
+            await graph_task
 
             # Format usage data for response
             usage_data = None
