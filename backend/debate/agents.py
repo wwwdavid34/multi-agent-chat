@@ -7,8 +7,8 @@ from typing import Dict, Any, Optional, Callable
 import logging
 
 try:
-    import ag2
-    from ag2 import AssistantAgent, UserProxyAgent
+    import autogen as ag2
+    from autogen import AssistantAgent, UserProxyAgent
 except ImportError:
     ag2 = None
     AssistantAgent = None

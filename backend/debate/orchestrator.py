@@ -13,8 +13,8 @@ from .agents import create_panelist_agent, create_moderator_agent, create_user_p
 from config import get_openai_api_key
 
 try:
-    import ag2
-    from ag2 import GroupChat, GroupChatManager, AssistantAgent
+    import autogen as ag2
+    from autogen import GroupChat, GroupChatManager, AssistantAgent
 except ImportError:
     ag2 = None
     GroupChat = None
