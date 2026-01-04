@@ -446,7 +446,8 @@ async def generate_title(req: GenerateTitleRequest) -> GenerateTitleResponse:
     Uses the moderator model (GPT-4o) to create a concise, descriptive title
     that captures the main topic of the conversation.
     """
-    from panel_graph import _get_moderator_model, create_usage_accumulator, add_to_accumulator
+    from panel_graph import _get_moderator_model
+    from usage_tracker import create_usage_accumulator, add_to_accumulator
     from langchain_core.messages import HumanMessage
 
     # Limit message length for title generation (first 500 chars)
