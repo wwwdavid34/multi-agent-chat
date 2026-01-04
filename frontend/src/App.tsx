@@ -2599,8 +2599,8 @@ function ChatComposer({
               className="w-full border-none rounded-2xl px-4 md:px-5 pt-3.5 md:pt-4 pb-14 md:pb-16 text-sm md:text-[15px] font-inherit resize-none overflow-y-hidden bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed"
             />
 
-            {/* Button container with separator */}
-            <div className="absolute left-0 right-0 bottom-0 pt-3 px-4 md:px-5 pb-3.5 md:pb-4 bg-gradient-to-t from-background/95 via-background/80 to-transparent border-t border-border/20 rounded-b-2xl">
+            {/* Button container */}
+            <div className="absolute left-0 right-0 bottom-0 pt-3 px-4 md:px-5 pb-3.5 md:pb-4 bg-gradient-to-t from-background/95 via-background/80 to-transparent rounded-b-2xl">
               <div className="flex items-center gap-2 md:gap-2.5">
                 <button
                   type="button"
