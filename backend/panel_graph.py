@@ -39,6 +39,7 @@ class DebateRound(TypedDict):
     round_number: int
     panel_responses: Dict[str, str]
     consensus_reached: bool
+    user_message: Optional[str]  # User's message in this round (if user-debate mode)
 
 
 class PanelState(TypedDict):
@@ -59,6 +60,9 @@ class PanelState(TypedDict):
     step_review: bool  # Whether to pause after each round for user review
     debate_paused: bool  # Whether debate is currently paused waiting for user
     usage_accumulator: Optional[Dict[str, Any]]  # Accumulated token usage
+    user_as_participant: bool  # User is actively participating in discussion
+    tagged_panelists: List[str]  # Panelist names user tagged (e.g., ["GPT", "Claude"])
+    user_message: Optional[str]  # User's direct message in user-debate
 
 
 class PanelistConfig(TypedDict):
@@ -435,6 +439,17 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
 
     panel_configs = _resolve_panelists(config)
     provider_keys = _resolve_provider_keys(config)
+
+    # Filter to tagged panelists if user is participating (user-debate mode)
+    if state.get("user_as_participant", False):
+        tagged_names = state.get("tagged_panelists", [])
+        original_configs = panel_configs
+        panel_configs = [p for p in panel_configs if p["name"] in tagged_names]
+
+        if not panel_configs:
+            logger.warning(f"No valid tagged panelists found ({tagged_names}), using all panelists")
+            panel_configs = original_configs
+
     panel_responses = dict(state.get("panel_responses", {}))
     panelist_names = [p["name"] for p in panel_configs]
 
@@ -804,6 +819,9 @@ async def consensus_checker_node(state: PanelState) -> Dict[str, Any]:
 
     Uses the moderator model to analyze if there's substantial agreement
     or if continued debate would be beneficial.
+
+    Special case: If user is participating (user-debate mode), always pause
+    for user input instead of checking consensus.
     """
     panel_responses = state.get("panel_responses", {})
     debate_round = state.get("debate_round", 0)
@@ -811,6 +829,26 @@ async def consensus_checker_node(state: PanelState) -> Dict[str, Any]:
     # Get usage accumulator
     from usage_tracker import create_usage_accumulator, add_to_accumulator
     usage_acc = state.get("usage_accumulator") or create_usage_accumulator()
+
+    # If user is participating in debate, always pause for user input
+    # Don't check consensus - let user drive the discussion
+    if state.get("user_as_participant", False):
+        debate_history = list(state.get("debate_history") or [])
+        current_round: DebateRound = {
+            "round_number": debate_round,
+            "panel_responses": panel_responses.copy(),
+            "consensus_reached": False,
+            "user_message": state.get("user_message"),  # Store user's message in this round
+        }
+        debate_history.append(current_round)
+        logger.info(f"User-debate mode: Pausing after round {debate_round} for user input")
+        return {
+            "consensus_reached": False,
+            "debate_paused": True,  # Force pause
+            "debate_round": debate_round + 1,
+            "debate_history": debate_history,
+            "usage_accumulator": usage_acc,
+        }
 
     if len(panel_responses) < 2:
         # Can't have meaningful debate with less than 2 panelists; treat as consensus so we can terminate.
@@ -820,6 +858,7 @@ async def consensus_checker_node(state: PanelState) -> Dict[str, Any]:
             "round_number": debate_round,
             "panel_responses": dict(panel_responses),
             "consensus_reached": consensus_reached,
+            "user_message": None,
         }
         debate_history.append(current_round)
         return {
@@ -891,6 +930,7 @@ KEY_DISAGREEMENTS: [If NO, list the specific positions that differ]
         "round_number": debate_round,
         "panel_responses": panel_responses.copy(),
         "consensus_reached": consensus_reached,
+        "user_message": None,
     }
     debate_history.append(current_round)
 

@@ -972,6 +972,32 @@ export default function App() {
     });
   }, []);
 
+  // Parse @ mentions from user input to extract tagged panelist names
+  const parseTaggedPanelists = useCallback(
+    (text: string): string[] => {
+      // Match @Name patterns (case-insensitive, fuzzy matching)
+      const mentions = text.match(/@(\w+(?:\s+\w+)*)/g) || [];
+      const tagged: string[] = [];
+
+      for (const mention of mentions) {
+        const searchTerm = mention.slice(1).toLowerCase(); // Remove @ and lowercase
+
+        // Find matching panelist using fuzzy match
+        const match = panelists.find(p =>
+          p.name.toLowerCase().includes(searchTerm) || searchTerm.includes(p.name.toLowerCase())
+        );
+
+        if (match) {
+          tagged.push(match.name);
+        }
+      }
+
+      // Deduplicate and return
+      return [...new Set(tagged)];
+    },
+    [panelists]
+  );
+
   const preparedPanelists = useMemo(
     () =>
       panelists
@@ -1036,6 +1062,14 @@ export default function App() {
       const useMaxRounds = customMaxRounds ?? DEFAULT_MAX_DEBATE_ROUNDS;
       const useStepReview = customStepReview ?? DEFAULT_STEP_REVIEW;
 
+      // Parse @ mentions to detect user-debate mode
+      const taggedPanelists = parseTaggedPanelists(sanitizedQuestion);
+      const userAsParticipant = taggedPanelists.length > 0;
+
+      // If user tags panelists, activate debate mode with step review
+      const effectiveDebateMode = userAsParticipant ? true : useDebateMode;
+      const effectiveStepReview = userAsParticipant ? true : useStepReview;
+
       // Immediately add user message with loading state for assistant response
       const optimisticEntry: MessageEntry = {
         id: entryId,
@@ -1064,9 +1098,12 @@ export default function App() {
             attachments,
             panelists: preparedPanelists,
             provider_keys: sanitizedProviderKeys,
-            debate_mode: useDebateMode,
+            debate_mode: effectiveDebateMode,
             max_debate_rounds: useMaxRounds,
-            step_review: useStepReview,
+            step_review: effectiveStepReview,
+            user_as_participant: userAsParticipant,
+            tagged_panelists: taggedPanelists,
+            user_message: userAsParticipant ? sanitizedQuestion : undefined,
           },
           {
             onStatus: (message) => {

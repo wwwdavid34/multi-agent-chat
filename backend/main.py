@@ -46,6 +46,10 @@ class AskRequest(BaseModel):
     max_debate_rounds: int | None = 3
     step_review: bool | None = False
     continue_debate: bool | None = False  # Whether this is continuing a paused debate
+    user_as_participant: bool | None = False  # User is participating (user-debate mode)
+    tagged_panelists: list[str] | None = None  # Panelist names user tagged
+    user_message: str | None = None  # User's message in user-debate
+    exit_user_debate: bool | None = False  # User wants to exit user-debate
 
 
 class AskResponse(BaseModel):
@@ -126,6 +130,10 @@ async def ask_stream(req: AskRequest, request: Request):
         if req.continue_debate:
             state = {}  # Empty state tells LangGraph to resume from checkpoint
             logger.info(f"Continuing debate for thread {req.thread_id}")
+            # If exiting user-debate, set flag to force consensus
+            if req.exit_user_debate:
+                state["consensus_reached"] = True
+                state["user_as_participant"] = False
         else:
             state = {
                 "messages": [HumanMessage(content=question_text)],
@@ -140,6 +148,9 @@ async def ask_stream(req: AskRequest, request: Request):
                 "debate_history": [],
                 "step_review": req.step_review or False,
                 "debate_paused": False,
+                "user_as_participant": req.user_as_participant or False,
+                "tagged_panelists": req.tagged_panelists or [],
+                "user_message": req.user_message,
             }
 
         # Create an event queue for streaming individual panelist responses
