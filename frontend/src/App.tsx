@@ -1,7 +1,7 @@
 import React, { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { askPanel, askPanelStream, fetchInitialKeys, fetchStorageInfo } from "./api";
+import { askPanel, askPanelStream, fetchInitialKeys, fetchStorageInfo, generateTitle } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
 import { DebateViewer } from "./components/DebateViewer";
@@ -666,8 +666,6 @@ export default function App() {
     }
     return normalized;
   });
-  const [newThreadName, setNewThreadName] = useState("");
-  const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [editingThreadName, setEditingThreadName] = useState("");
   const [threadMenuOpen, setThreadMenuOpen] = useState<string | null>(null);
@@ -717,7 +715,6 @@ export default function App() {
     // Default: all panelists enabled
     return new Set(panelists.map((p) => p.id));
   });
-  const newThreadInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
@@ -839,13 +836,6 @@ export default function App() {
     }
   }, [threadId, threads, conversations]);
 
-  useEffect(() => {
-    if (isCreatingThread) {
-      const frame = requestAnimationFrame(() => newThreadInputRef.current?.focus());
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [isCreatingThread]);
-
   // Auto-focus rename input when editing starts
   useEffect(() => {
     if (editingThreadId) {
@@ -927,8 +917,7 @@ export default function App() {
       // Cmd/Ctrl + N: New thread
       if (modKey && e.key === 'n') {
         e.preventDefault();
-        setIsCreatingThread(true);
-        setNewThreadName("");
+        handleCreateThread();
       }
 
       // Cmd/Ctrl + /: Toggle settings
@@ -947,10 +936,6 @@ export default function App() {
           e.preventDefault();
           setConfigOpen(false);
         }
-        if (isCreatingThread) {
-          e.preventDefault();
-          cancelThreadCreation();
-        }
         if (editingThreadId) {
           e.preventDefault();
           cancelThreadRename();
@@ -964,7 +949,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyboardShortcut);
     return () => window.removeEventListener('keydown', handleKeyboardShortcut);
-  }, [configOpen, isCreatingThread, showKeyboardShortcuts, editingThreadId, threadMenuOpen]);
+  }, [configOpen, showKeyboardShortcuts, editingThreadId, threadMenuOpen]);
 
   const togglePanelist = useCallback((id: string) => {
     setEnabledPanelists((prev) => {
@@ -1198,6 +1183,24 @@ export default function App() {
                     : entry
                 ) ?? [],
               }));
+
+              // Auto-generate title if this is the first message in a new conversation
+              const isFirstMessage = conversations[threadId]?.length === 0;
+              const isPlaceholderTitle = threadId.startsWith("Chat ");
+
+              if (isFirstMessage && isPlaceholderTitle) {
+                // Generate title in background (don't await)
+                generateTitle(sanitizedQuestion).then((newTitle) => {
+                  if (newTitle) {
+                    // Rename thread from placeholder to generated title
+                    renameThreadDirect(threadId, newTitle);
+                  }
+                }).catch((err) => {
+                  console.warn("Failed to auto-generate title:", err);
+                  // Silently fail - keep placeholder title
+                });
+              }
+
               // Clear loading state when response is complete
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
@@ -1519,6 +1522,24 @@ export default function App() {
     setEditingThreadName(id);
   }
 
+  function renameThreadDirect(oldId: string, newName: string) {
+    const proposed = newName.trim();
+
+    // Cancel if empty, unchanged, or duplicate
+    if (!proposed || proposed === oldId || (proposed !== oldId && threads.includes(proposed))) {
+      return;
+    }
+
+    setThreads((prev) => prev.map((thread) => (thread === oldId ? proposed : thread)));
+    setConversations((prev) => {
+      const { [oldId]: entries, ...rest } = prev;
+      return { ...rest, [proposed]: entries ?? [] };
+    });
+    if (threadId === oldId) {
+      setThreadId(proposed);
+    }
+  }
+
   function saveThreadRename() {
     if (!editingThreadId) return;
 
@@ -1565,28 +1586,20 @@ export default function App() {
     }
   }
 
-  function handleCreateThread(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = newThreadName.trim();
-    if (!trimmed) return;
+  function handleCreateThread() {
+    // Generate timestamp-based placeholder name
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const ampm = hours >= 12 ? "PM" : "AM";
+    const displayHours = hours % 12 || 12;
+    const displayMinutes = minutes.toString().padStart(2, "0");
+    const placeholderName = `Chat ${displayHours}:${displayMinutes} ${ampm}`;
 
-    setThreads((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
-    setConversations((prev) => (prev[trimmed] ? prev : { ...prev, [trimmed]: [] }));
-    setThreadId(trimmed);
-    setNewThreadName("");
-    setIsCreatingThread(false);
-  }
-
-  function cancelThreadCreation() {
-    setIsCreatingThread(false);
-    setNewThreadName("");
-  }
-
-  function handleThreadInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      cancelThreadCreation();
-    }
+    // Immediately create thread with placeholder
+    setThreads((prev) => (prev.includes(placeholderName) ? prev : [...prev, placeholderName]));
+    setConversations((prev) => (prev[placeholderName] ? prev : { ...prev, [placeholderName]: [] }));
+    setThreadId(placeholderName);
   }
 
   const handleAddPanelist = useCallback(() => {
@@ -1927,10 +1940,7 @@ export default function App() {
             <button
               type="button"
               className="w-8 h-8 rounded-lg border border-border/60 bg-muted/30 text-foreground text-lg font-semibold leading-none flex items-center justify-center cursor-pointer hover:bg-muted hover:border-accent/50 transition-all"
-              onClick={() => {
-                setIsCreatingThread(true);
-                setNewThreadName("");
-              }}
+              onClick={handleCreateThread}
               aria-label="Create new thread"
             >
               +
@@ -2094,23 +2104,6 @@ export default function App() {
             </li>
           ))}
         </ul>
-        {isCreatingThread && (
-          <form className="flex gap-2" onSubmit={handleCreateThread}>
-            <input
-              ref={newThreadInputRef}
-              value={newThreadName}
-              onChange={(e) => setNewThreadName(e.target.value)}
-              onBlur={() => {
-                if (!newThreadName.trim()) {
-                  cancelThreadCreation();
-                }
-              }}
-              onKeyDown={handleThreadInputKeyDown}
-              placeholder="Name your thread"
-              className="flex-1 rounded-lg border border-border/60 px-3 py-2 text-sm font-inherit bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60 transition-all"
-            />
-          </form>
-        )}
 
         {/* Settings and Theme toggle at bottom */}
         <div className="flex flex-col gap-2 pt-4 border-t border-border/40 mt-auto">

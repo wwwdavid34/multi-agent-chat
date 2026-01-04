@@ -199,3 +199,27 @@ export async function fetchInitialKeys(): Promise<Record<string, string>> {
 
   return {};
 }
+
+/**
+ * Generate a conversation title from the first message
+ */
+export async function generateTitle(firstMessage: string): Promise<string> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/generate-title`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ first_message: firstMessage }),
+    });
+
+    if (!res.ok) {
+      console.warn("Failed to generate title:", res.statusText);
+      return ""; // Return empty to keep placeholder
+    }
+
+    const data = await res.json();
+    return data.title || "";
+  } catch (error) {
+    console.warn("Failed to generate title:", error);
+    return "";
+  }
+}

@@ -71,6 +71,15 @@ class ProviderModelsResponse(BaseModel):
     models: list[ProviderModel]
 
 
+class GenerateTitleRequest(BaseModel):
+    first_message: str
+
+
+class GenerateTitleResponse(BaseModel):
+    title: str
+    usage: dict[str, int] | None = None
+
+
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest) -> AskResponse:
     attachments = req.attachments or []
@@ -428,6 +437,59 @@ async def get_storage_info() -> dict[str, str]:
     conversations will persist across restarts.
     """
     return get_storage_mode()
+
+
+@app.post("/generate-title", response_model=GenerateTitleResponse)
+async def generate_title(req: GenerateTitleRequest) -> GenerateTitleResponse:
+    """Generate a conversation title from the first user message.
+
+    Uses the moderator model (GPT-4o) to create a concise, descriptive title
+    that captures the main topic of the conversation.
+    """
+    from panel_graph import _get_moderator_model, create_usage_accumulator, add_to_accumulator
+    from langchain_core.messages import HumanMessage
+
+    # Limit message length for title generation (first 500 chars)
+    truncated_message = req.first_message[:500]
+
+    title_prompt = f"""Generate a concise, descriptive title (max 50 characters) for a conversation that starts with:
+
+"{truncated_message}"
+
+Requirements:
+- Be specific and capture the main topic
+- Use title case
+- No quotes or special characters around the title
+- Max 50 characters
+- Be direct and clear
+
+Title:"""
+
+    try:
+        moderator_model = _get_moderator_model()
+        response = await moderator_model.ainvoke([HumanMessage(content=title_prompt)])
+        title = response.content.strip()
+
+        # Ensure title length constraint
+        if len(title) > 50:
+            title = title[:47] + "..."
+
+        # Track usage
+        usage_acc = create_usage_accumulator()
+        add_to_accumulator(usage_acc, response, model="gpt-4o", provider="openai", node_name="title_generation")
+
+        return GenerateTitleResponse(
+            title=title,
+            usage={
+                "input_tokens": usage_acc.get("total_input", 0),
+                "output_tokens": usage_acc.get("total_output", 0),
+            }
+        )
+    except Exception as e:
+        logger.exception("Failed to generate title")
+        # Fallback to truncated message if generation fails
+        fallback_title = truncated_message[:47] + "..." if len(truncated_message) > 50 else truncated_message
+        return GenerateTitleResponse(title=fallback_title, usage=None)
 
 
 @app.get("/usage/{thread_id}")
