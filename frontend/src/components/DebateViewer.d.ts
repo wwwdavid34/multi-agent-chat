@@ -6,6 +6,8 @@ interface DebateViewerProps {
     stepReview?: boolean;
     debatePaused?: boolean;
     onContinue?: () => void;
+    tagged_panelists?: string[];
+    user_as_participant?: boolean;
 }
-export declare function DebateViewer({ debateHistory, panelists, onCopy, stepReview, debatePaused, onContinue }: DebateViewerProps): import("react/jsx-runtime").JSX.Element | null;
+export declare function DebateViewer({ debateHistory, panelists, onCopy, stepReview, debatePaused, onContinue, tagged_panelists, user_as_participant }: DebateViewerProps): import("react/jsx-runtime").JSX.Element | null;
 export {};

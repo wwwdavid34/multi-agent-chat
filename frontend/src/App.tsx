@@ -253,8 +253,8 @@ const MessageBubble = memo(function MessageBubble({
                 className="p-1 rounded hover:bg-muted/40 transition-colors"
                 title="Regenerate response"
               >
-                <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
+                <svg viewBox="0 0 24 24" className="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 12a8 8 0 0 1 8-8 8 8 0 0 1 6.18 2.82l2.82-2.82M20 4v6h-6M20 12a8 8 0 0 1-8 8 8 8 0 0 1-6.18-2.82l-2.82 2.82M4 20v-6h6" />
                 </svg>
               </button>
             )}
@@ -2509,8 +2509,8 @@ function ChatComposer({
     // Reset height to get accurate scrollHeight
     textarea.style.height = 'auto';
 
-    // Set height based on content, with max limit
-    const maxHeight = 120; // ~5 lines max
+    // Set height based on content, with max limit to keep cursor visible above buttons
+    const maxHeight = 300; // Allow ~12-15 lines before scrollbar appears
     const newHeight = Math.min(textarea.scrollHeight, maxHeight);
     textarea.style.height = `${newHeight}px`;
 

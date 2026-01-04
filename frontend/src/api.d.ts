@@ -29,3 +29,7 @@ export declare function fetchStorageInfo(): Promise<{
  * Retries up to 5 times with exponential backoff if backend isn't ready yet
  */
 export declare function fetchInitialKeys(): Promise<Record<string, string>>;
+/**
+ * Generate a conversation title from the first message
+ */
+export declare function generateTitle(firstMessage: string): Promise<string>;

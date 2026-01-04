@@ -3,6 +3,7 @@ export interface DebateRound {
     round_number: number;
     panel_responses: PanelResponses;
     consensus_reached: boolean;
+    user_message?: string;
 }
 export type LLMProvider = "openai" | "gemini" | "claude" | "grok";
 export interface ProviderModel {
@@ -33,6 +34,7 @@ export interface AskResponse {
     summary: string;
     panel_responses: PanelResponses;
     debate_history?: DebateRound[];
+    debate_paused?: boolean;
     usage?: TokenUsage;
 }
 export interface AskRequestBody {
@@ -45,4 +47,8 @@ export interface AskRequestBody {
     max_debate_rounds?: number;
     step_review?: boolean;
     continue_debate?: boolean;
+    user_as_participant?: boolean;
+    tagged_panelists?: string[];
+    user_message?: string;
+    exit_user_debate?: boolean;
 }
