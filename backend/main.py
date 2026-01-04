@@ -17,6 +17,9 @@ from panel_graph import panel_graph, get_storage_mode
 from provider_clients import ProviderName, fetch_provider_models
 from config import get_debate_engine, get_pg_conn_str, use_in_memory_checkpointer
 
+# Initialize logger early so it's available in all functions
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="AI Discussion Panel")
 
 # Initialize AG2 debate service (if enabled)
@@ -34,20 +37,19 @@ async def get_ag2_service():
             # Use in-memory storage if configured, otherwise use PostgreSQL
             if use_in_memory_checkpointer():
                 storage = InMemoryDebateStorage()
-                logger.info("Initialized AG2 debate service with in-memory storage")
+                logger.info("🟦 [AG2-SERVICE] Initialized with IN-MEMORY storage")
             else:
                 conn_str = get_pg_conn_str()
                 storage = PostgresDebateStorage(conn_str)
-                logger.info("Initialized AG2 debate service with PostgreSQL storage")
+                logger.info("🟦 [AG2-SERVICE] Initialized with PostgreSQL storage")
 
             _ag2_service = AG2DebateService(storage)
+            logger.info("🟦 [AG2-SERVICE] AG2 debate service ready")
         except Exception as e:
-            logger.error(f"Failed to initialize AG2 debate service: {e}")
+            logger.error(f"🟥 [AG2-SERVICE] Failed to initialize: {e}", exc_info=True)
             raise
 
     return _ag2_service
-
-logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,6 +58,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Log startup information including debate engine selection."""
+    try:
+        engine = get_debate_engine()
+        storage_mode = get_storage_mode()
+
+        if engine == "ag2":
+            logger.info("=" * 80)
+            logger.info("🔵 DEBATE ENGINE: AG2 (New Backend)")
+            logger.info("=" * 80)
+            logger.info("✓ AG2 backend is ENABLED")
+            logger.info("✓ Using feature-flag based routing")
+            logger.info("✓ Lazy initialization on first request")
+        else:
+            logger.info("=" * 80)
+            logger.info("🟢 DEBATE ENGINE: LangGraph (Legacy Backend)")
+            logger.info("=" * 80)
+            logger.info("✓ LangGraph backend is ACTIVE (default)")
+            logger.info(f"✓ Storage mode: {storage_mode}")
+
+        logger.info("=" * 80)
+    except Exception as e:
+        logger.error(f"🟥 Error during startup: {e}", exc_info=True)
 
 
 class PanelistConfig(BaseModel):
@@ -154,20 +182,31 @@ async def ask_stream(req: AskRequest, request: Request):
 
     # Check feature flag for debate engine selection
     debate_engine = get_debate_engine()
-    logger.info(f"Using debate engine: {debate_engine}")
 
     if debate_engine == "ag2":
         # Use new AG2-based backend
+        logger.info("=" * 80)
+        logger.info(f"🔵 [DEBATE] Using AG2 backend for thread: {req.thread_id}")
+        logger.info(f"   Question: {req.question[:80]}{'...' if len(req.question) > 80 else ''}")
+        logger.info(f"   Mode: {'debate' if req.debate_mode else 'panel'} | Rounds: {req.max_debate_rounds}")
+        logger.info("=" * 80)
         return await _handle_ag2_debate(req)
     else:
         # Use existing LangGraph backend
+        logger.info("=" * 80)
+        logger.info(f"🟢 [DEBATE] Using LangGraph backend for thread: {req.thread_id}")
+        logger.info(f"   Question: {req.question[:80]}{'...' if len(req.question) > 80 else ''}")
+        logger.info(f"   Mode: {'debate' if req.debate_mode else 'panel'} | Rounds: {req.max_debate_rounds}")
+        logger.info("=" * 80)
         return await _handle_langgraph_debate(req)
 
 
 async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
     """Handle debate using AG2 backend."""
     try:
+        logger.info(f"🔵 [AG2] Initializing AG2 debate service for thread {req.thread_id}")
         service = await get_ag2_service()
+        logger.info(f"🔵 [AG2] Service initialized, starting event stream for thread {req.thread_id}")
 
         async def ag2_event_stream() -> AsyncIterator[str]:
             """Stream events from AG2 debate service."""
@@ -193,7 +232,27 @@ async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
                     )
 
                 # Stream events from service as SSE
+                event_count = 0
                 async for event in event_iter:
+                    event_count += 1
+                    event_type = event.get("type", "unknown")
+
+                    # Log event with visual indicator
+                    if event_type == "status":
+                        logger.debug(f"🔵 [AG2-EVENT] Status: {event.get('message', '')}")
+                    elif event_type == "panelist_response":
+                        panelist = event.get("panelist", "Unknown")
+                        logger.debug(f"🔵 [AG2-EVENT] {panelist} responded ({len(event.get('response', '')) // 10} words)")
+                    elif event_type == "debate_round":
+                        round_num = event.get("round", {}).get("round_number", "?")
+                        logger.info(f"🔵 [AG2-EVENT] Debate round {round_num} complete")
+                    elif event_type == "result":
+                        logger.info(f"🔵 [AG2-EVENT] Debate complete - Final result received")
+                    elif event_type == "error":
+                        logger.error(f"🔵 [AG2-EVENT] Error: {event.get('message', 'Unknown error')}")
+                    elif event_type == "done":
+                        logger.info(f"🔵 [AG2-EVENT] Stream complete ({event_count} events total)")
+
                     yield f"data: {json.dumps(event)}\n\n"
 
             except asyncio.CancelledError:
@@ -228,10 +287,12 @@ async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
 
 async def _handle_langgraph_debate(req: AskRequest) -> StreamingResponse:
     """Handle debate using LangGraph backend (existing implementation)."""
+    logger.info(f"🟢 [LANGGRAPH] Initializing LangGraph service for thread {req.thread_id}")
 
     async def event_stream() -> AsyncIterator[str]:
         """Generate Server-Sent Events for graph execution."""
         print(f"[EVENT_STREAM] Started for thread {req.thread_id}", flush=True)
+        logger.info(f"🟢 [LANGGRAPH] Event stream started for thread {req.thread_id}")
 
         attachments = req.attachments or []
         attachment_md = "\n".join(
