@@ -9,8 +9,34 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from .state import DebateState, DebateRound
+from .agents import create_panelist_agent, create_moderator_agent, create_user_proxy, create_search_tool
+from config import get_openai_api_key
+
+try:
+    import ag2
+    from ag2 import GroupChat, GroupChatManager, AssistantAgent
+except ImportError:
+    ag2 = None
+    GroupChat = None
+    GroupChatManager = None
+    AssistantAgent = None
 
 logger = logging.getLogger(__name__)
+
+# Consensus prompt for evaluating agreement between panelists
+CONSENSUS_PROMPT = """Based on the panel responses below, determine if the panelists have reached consensus.
+
+Consensus means:
+- All panelists agree on the main point
+- Any disagreements are minor or peripheral
+- There's a clear shared understanding on the core issue
+
+Panel Responses:
+{responses}
+
+Respond with exactly: "CONSENSUS: YES" or "CONSENSUS: NO"
+
+Then briefly explain (1-2 sentences):"""
 
 
 class DebateOrchestrator:
@@ -43,13 +69,73 @@ class DebateOrchestrator:
         self.agents: List[Any] = []
         self.groupchat: Optional[Any] = None
         self.manager: Optional[Any] = None
+        self.moderator: Optional[Any] = None
+
+    async def _emit_event(self, event_type: str, **kwargs) -> None:
+        """Emit SSE event to frontend.
+
+        Args:
+            event_type: Type of event (status, panelist_response, etc.)
+            **kwargs: Additional fields for the event
+        """
+        event = {"type": event_type, **kwargs}
+        await self.queue.put(event)
 
     async def initialize(self) -> None:
         """Set up AG2 group chat and agents.
 
-        Placeholder - will be implemented in Phase 2.
+        Creates panelist agents, moderator, and group chat manager.
+        Registers search tool if enabled.
         """
-        raise NotImplementedError("Implement in Phase 2")
+        if GroupChat is None:
+            raise RuntimeError("ag2 not installed. Install with: pip install ag2")
+
+        await self._emit_event("status", message="Initializing panel...")
+
+        # Create panelist agents from configuration
+        self.agents = []
+        panelists = self.state.get("panelists", [])
+
+        for panelist_config in panelists:
+            try:
+                provider = panelist_config.get("provider", "openai")
+                api_key = panelist_config.get("api_key", get_openai_api_key())
+
+                agent = create_panelist_agent(panelist_config, api_key)
+                self.agents.append(agent)
+                logger.info(f"Created agent: {panelist_config.get('name')}")
+            except Exception as e:
+                logger.error(f"Failed to create agent for {panelist_config}: {e}")
+                raise
+
+        # Create moderator agent
+        try:
+            self.moderator = create_moderator_agent()
+        except Exception as e:
+            logger.error(f"Failed to create moderator: {e}")
+            raise
+
+        # Create AG2 GroupChat (AG2 manages turn-taking and message history)
+        self.groupchat = GroupChat(
+            agents=self.agents + [self.moderator],
+            messages=[],
+            max_round=50,  # Safety limit for AG2's internal loop
+        )
+
+        # Create GroupChatManager to orchestrate the chat
+        try:
+            self.manager = GroupChatManager(
+                groupchat=self.groupchat,
+                llm_config={
+                    "config_list": [{"model": "gpt-4o-mini", "api_key": get_openai_api_key()}]
+                },
+                is_termination_msg=lambda x: "TERMINATE" in x.get("content", ""),
+            )
+        except Exception as e:
+            logger.error(f"Failed to create GroupChatManager: {e}")
+            raise
+
+        logger.info(f"Initialized debate with {len(self.agents)} panelists")
 
     async def run_debate_round(self, question: str) -> DebateRound:
         """Execute one debate round using AG2.
@@ -60,9 +146,86 @@ class DebateOrchestrator:
         4. Check for consensus
         5. Emit debate_round event
 
-        Placeholder - will be implemented in Phase 2.
+        Args:
+            question: The debate question/topic
+
+        Returns:
+            DebateRound with responses and consensus status
         """
-        raise NotImplementedError("Implement in Phase 2")
+        await self._emit_event("status", message="Panel is discussing...")
+
+        round_number = self.state.get("debate_round", 0)
+
+        # For first round, prepare topic context
+        if round_number == 0:
+            # Initial question to start debate
+            initial_message = f"Let's discuss this topic: {question}\n\nEach panelist should provide their perspective."
+        else:
+            # Continuation for subsequent rounds
+            initial_message = f"Continue the discussion on: {question}\n\nConsider the points already raised and add new insights."
+
+        # Inject the message into AG2 group chat
+        self.groupchat.messages.append({
+            "role": "user",
+            "content": initial_message,
+        })
+
+        # Collect responses from each panelist
+        responses: Dict[str, str] = {}
+
+        try:
+            # Let each panelist respond
+            for agent in self.agents:
+                try:
+                    # Get panelist response via AG2
+                    reply = agent.generate_reply(
+                        messages=self.groupchat.messages,
+                        sender=self.manager,
+                    )
+
+                    if reply:
+                        responses[agent.name] = reply
+                        self.groupchat.messages.append({
+                            "role": "assistant",
+                            "content": reply,
+                            "name": agent.name,
+                        })
+
+                        # Stream response to frontend
+                        await self._emit_event(
+                            "panelist_response",
+                            panelist=agent.name,
+                            response=reply,
+                        )
+
+                except Exception as e:
+                    logger.error(f"Error getting response from {agent.name}: {e}")
+                    responses[agent.name] = f"(Unable to generate response: {str(e)})"
+
+        except Exception as e:
+            logger.error(f"Error during debate round: {e}")
+            raise
+
+        # Check for consensus
+        consensus = await self._check_consensus(responses)
+
+        # Build round result
+        round_data = DebateRound(
+            round_number=round_number,
+            panel_responses=responses,
+            consensus_reached=consensus,
+            user_message=None,
+        )
+
+        # Emit debate round event
+        await self._emit_event("debate_round", round=round_data)
+
+        # Update state
+        if "debate_history" not in self.state:
+            self.state["debate_history"] = []
+        self.state["debate_history"].append(round_data)
+
+        return round_data
 
     async def _check_consensus(self, responses: Dict[str, str]) -> bool:
         """Simplified consensus checking.
@@ -72,16 +235,83 @@ class DebateOrchestrator:
         - Single panelist: auto-consensus
         - Multiple panelists: use moderator to evaluate
 
-        Placeholder - will be implemented in Phase 2.
+        Args:
+            responses: Dict of panelist_name -> response_text
+
+        Returns:
+            Boolean indicating if consensus was reached
         """
-        raise NotImplementedError("Implement in Phase 2")
+        # User-debate: never auto-consensus
+        if self.state.get("user_as_participant"):
+            return False
+
+        # Single panelist: auto-consensus
+        if len(responses) <= 1:
+            return True
+
+        # Multiple panelists: use moderator to evaluate
+        try:
+            # Format responses for prompt
+            responses_text = "\n".join(
+                f"- {name}: {resp[:200]}..."
+                for name, resp in responses.items()
+            )
+
+            prompt = CONSENSUS_PROMPT.format(responses=responses_text)
+
+            # Get moderator's consensus evaluation
+            result = self.moderator.generate_reply(
+                messages=[{"role": "user", "content": prompt}],
+                sender=None,
+            )
+
+            return "CONSENSUS: YES" in (result or "")
+
+        except Exception as e:
+            logger.error(f"Error checking consensus: {e}")
+            # On error, don't claim consensus
+            return False
 
     async def run_moderation(self) -> str:
         """Generate final summary via moderator.
 
-        Placeholder - will be implemented in Phase 2.
+        Takes full debate history and generates synthesized summary.
+
+        Returns:
+            Final summary string
         """
-        raise NotImplementedError("Implement in Phase 2")
+        await self._emit_event("status", message="Moderating the discussion...")
+
+        try:
+            # Get all messages from group chat
+            debate_history = "\n".join(
+                f"{m.get('name', 'User')}: {m.get('content', '')}"
+                for m in self.groupchat.messages[-20:]  # Last 20 messages for context
+            )
+
+            summary_prompt = f"""Please provide a final synthesis of this panel discussion:
+
+{debate_history}
+
+Create a comprehensive summary that:
+1. Identifies key arguments from each panelist
+2. Highlights areas of agreement
+3. Notes important disagreements
+4. Provides your assessment of the strongest points
+5. Suggests areas for further exploration
+
+Keep the summary to 2-3 paragraphs."""
+
+            summary = self.moderator.generate_reply(
+                messages=[{"role": "user", "content": summary_prompt}],
+                sender=None,
+            )
+
+            return summary or "Unable to generate summary"
+
+        except Exception as e:
+            logger.error(f"Error during moderation: {e}")
+            return f"Moderation failed: {str(e)}"
 
     async def step(self) -> DebateState:
         """Execute one phase step.
@@ -96,41 +326,48 @@ class DebateOrchestrator:
         Returns:
             Updated state after step execution
         """
-        match self.state["phase"]:
-            case "init":
-                # Initialize AG2 group chat
-                await self.initialize()
-                self.state["phase"] = "debate"
-                return self.state
+        try:
+            match self.state["phase"]:
+                case "init":
+                    # Initialize AG2 group chat
+                    await self.initialize()
+                    self.state["phase"] = "debate"
+                    return self.state
 
-            case "debate":
-                # Run one debate round
-                round_result = await self.run_debate_round(self.state.get("question", ""))
-                self.state["debate_round"] = self.state.get("debate_round", 0) + 1
+                case "debate":
+                    # Run one debate round
+                    question = self.state.get("question", "")
+                    round_result = await self.run_debate_round(question)
+                    self.state["debate_round"] = self.state.get("debate_round", 0) + 1
 
-                # Deterministic phase transition logic
-                if round_result["consensus_reached"]:
-                    self.state["phase"] = "moderation"
-                elif self.state["debate_round"] >= self.state["max_rounds"]:
-                    self.state["phase"] = "moderation"
-                elif self.state.get("step_review"):
-                    self.state["phase"] = "paused"
-                else:
-                    self.state["phase"] = "debate"  # Loop for next round
+                    # Deterministic phase transition logic
+                    if round_result["consensus_reached"]:
+                        self.state["phase"] = "moderation"
+                    elif self.state.get("debate_round", 0) >= self.state.get("max_rounds", 3):
+                        self.state["phase"] = "moderation"
+                    elif self.state.get("step_review"):
+                        self.state["phase"] = "paused"
+                    else:
+                        self.state["phase"] = "debate"  # Loop for next round
 
-                return self.state
+                    return self.state
 
-            case "paused":
-                # Wait for user to resume (no action here)
-                return self.state
+                case "paused":
+                    # Wait for user to resume (no action here)
+                    return self.state
 
-            case "moderation":
-                # Generate final summary
-                summary = await self.run_moderation()
-                self.state["summary"] = summary
-                self.state["phase"] = "finished"
-                return self.state
+                case "moderation":
+                    # Generate final summary
+                    summary = await self.run_moderation()
+                    self.state["summary"] = summary
+                    self.state["phase"] = "finished"
+                    return self.state
 
-            case "finished":
-                # Terminal state
-                return self.state
+                case "finished":
+                    # Terminal state
+                    return self.state
+
+        except Exception as e:
+            logger.error(f"Error in orchestrator step: {e}")
+            await self._emit_event("error", message=str(e))
+            raise

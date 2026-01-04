@@ -15,8 +15,37 @@ from pydantic import BaseModel
 
 from panel_graph import panel_graph, get_storage_mode
 from provider_clients import ProviderName, fetch_provider_models
+from config import get_debate_engine, get_pg_conn_str, use_in_memory_checkpointer
 
 app = FastAPI(title="AI Discussion Panel")
+
+# Initialize AG2 debate service (if enabled)
+_ag2_service = None
+
+
+async def get_ag2_service():
+    """Lazy initialize AG2 debate service."""
+    global _ag2_service
+    if _ag2_service is None:
+        try:
+            from debate.service import AG2DebateService
+            from debate.persistence import PostgresDebateStorage, InMemoryDebateStorage
+
+            # Use in-memory storage if configured, otherwise use PostgreSQL
+            if use_in_memory_checkpointer():
+                storage = InMemoryDebateStorage()
+                logger.info("Initialized AG2 debate service with in-memory storage")
+            else:
+                conn_str = get_pg_conn_str()
+                storage = PostgresDebateStorage(conn_str)
+                logger.info("Initialized AG2 debate service with PostgreSQL storage")
+
+            _ag2_service = AG2DebateService(storage)
+        except Exception as e:
+            logger.error(f"Failed to initialize AG2 debate service: {e}")
+            raise
+
+    return _ag2_service
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +151,83 @@ async def ask(req: AskRequest) -> AskResponse:
 @app.post("/ask-stream")
 async def ask_stream(req: AskRequest, request: Request):
     """Streaming endpoint that provides real-time status updates."""
+
+    # Check feature flag for debate engine selection
+    debate_engine = get_debate_engine()
+    logger.info(f"Using debate engine: {debate_engine}")
+
+    if debate_engine == "ag2":
+        # Use new AG2-based backend
+        return await _handle_ag2_debate(req)
+    else:
+        # Use existing LangGraph backend
+        return await _handle_langgraph_debate(req)
+
+
+async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
+    """Handle debate using AG2 backend."""
+    try:
+        service = await get_ag2_service()
+
+        async def ag2_event_stream() -> AsyncIterator[str]:
+            """Stream events from AG2 debate service."""
+            try:
+                # Determine if this is a resume or start
+                if req.continue_debate:
+                    logger.info(f"Resuming AG2 debate for thread {req.thread_id}")
+                    event_iter = service.resume_debate(
+                        thread_id=req.thread_id,
+                        user_message=req.user_message,
+                    )
+                else:
+                    logger.info(f"Starting AG2 debate for thread {req.thread_id}")
+                    event_iter = service.start_debate(
+                        thread_id=req.thread_id,
+                        question=req.question,
+                        panelists=[p.model_dump() for p in req.panelists] if req.panelists else [],
+                        debate_mode=req.debate_mode or False,
+                        max_debate_rounds=req.max_debate_rounds or 3,
+                        step_review=req.step_review or False,
+                        user_as_participant=req.user_as_participant or False,
+                        tagged_panelists=req.tagged_panelists or [],
+                    )
+
+                # Stream events from service as SSE
+                async for event in event_iter:
+                    yield f"data: {json.dumps(event)}\n\n"
+
+            except asyncio.CancelledError:
+                logger.info(f"AG2 debate stream cancelled for {req.thread_id}")
+                return
+            except Exception as e:
+                logger.error(f"Error in AG2 debate stream: {e}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return StreamingResponse(
+            ag2_event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to start AG2 debate service: {e}", exc_info=True)
+        async def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to initialize AG2 debate service: {str(e)}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        return StreamingResponse(
+            error_stream(),
+            media_type="text/event-stream",
+            status_code=500,
+        )
+
+
+async def _handle_langgraph_debate(req: AskRequest) -> StreamingResponse:
+    """Handle debate using LangGraph backend (existing implementation)."""
 
     async def event_stream() -> AsyncIterator[str]:
         """Generate Server-Sent Events for graph execution."""

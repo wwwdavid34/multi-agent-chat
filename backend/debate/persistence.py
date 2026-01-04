@@ -6,11 +6,16 @@ No LangGraph checkpointer complexity - just save/load state as JSON.
 
 import json
 import logging
-from typing import Protocol, Dict, Any
+from typing import Protocol, Dict, Any, Optional
 
 from .state import DebateState
 
 logger = logging.getLogger(__name__)
+
+try:
+    import asyncpg
+except ImportError:
+    asyncpg = None
 
 
 class DebateStorage(Protocol):
@@ -58,26 +63,40 @@ class PostgresDebateStorage:
     );
     """
 
-    def __init__(self, db_conn_factory=None):
-        """Initialize with optional custom connection factory.
+    def __init__(self, conn_string: str):
+        """Initialize with PostgreSQL connection string.
 
         Args:
-            db_conn_factory: Optional async connection factory
-                           Defaults to using get_db_connection() from main
+            conn_string: asyncpg connection string
         """
-        self.db_conn_factory = db_conn_factory
+        if asyncpg is None:
+            raise RuntimeError("asyncpg not installed. Install with: pip install asyncpg")
 
-    async def _get_connection(self):
-        """Get database connection.
+        self.conn_string = conn_string
+        self._pool: Optional[Any] = None
 
-        Uses injected factory or falls back to importing from main.
-        """
-        if self.db_conn_factory:
-            return self.db_conn_factory()
+    async def _get_pool(self):
+        """Get or create database connection pool."""
+        if self._pool is None:
+            self._pool = await asyncpg.create_pool(self.conn_string, min_size=1, max_size=5)
+            await self._ensure_table()
+        return self._pool
 
-        # Lazy import to avoid circular dependencies
-        from main import get_db_connection
-        return get_db_connection()
+    async def _ensure_table(self) -> None:
+        """Create debate_state table if it doesn't exist."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS debate_state (
+                    thread_id TEXT PRIMARY KEY,
+                    state JSONB NOT NULL,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_debate_state_updated ON debate_state(updated_at);
+            """)
+            logger.debug("Ensured debate_state table exists")
 
     async def save(self, thread_id: str, state: DebateState) -> None:
         """Save state as JSON to PostgreSQL.
@@ -86,7 +105,22 @@ class PostgresDebateStorage:
             thread_id: Thread identifier
             state: State to save
         """
-        raise NotImplementedError("Implement in Phase 3")
+        try:
+            pool = await self._get_pool()
+            state_json = json.dumps(state)
+
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO debate_state (thread_id, state, updated_at)
+                    VALUES ($1, $2, NOW())
+                    ON CONFLICT (thread_id) DO UPDATE
+                    SET state = $2, updated_at = NOW()
+                """, thread_id, state_json)
+
+            logger.debug(f"Saved debate state for thread {thread_id}")
+        except Exception as e:
+            logger.error(f"Error saving debate state for {thread_id}: {e}")
+            raise
 
     async def load(self, thread_id: str) -> DebateState:
         """Load state from PostgreSQL JSON.
@@ -100,7 +134,32 @@ class PostgresDebateStorage:
         Raises:
             ValueError: If state not found
         """
-        raise NotImplementedError("Implement in Phase 3")
+        try:
+            pool = await self._get_pool()
+
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT state FROM debate_state WHERE thread_id = $1",
+                    thread_id
+                )
+
+            if not row:
+                raise ValueError(f"No debate state found for thread {thread_id}")
+
+            state_data = row["state"]
+            # Handle both string and dict (asyncpg may return dict for JSONB)
+            if isinstance(state_data, str):
+                state = json.loads(state_data)
+            else:
+                state = state_data
+
+            logger.debug(f"Loaded debate state for thread {thread_id}")
+            return state
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"Error loading debate state for {thread_id}: {e}")
+            raise
 
 
 class InMemoryDebateStorage:
