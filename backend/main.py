@@ -453,7 +453,7 @@ async def generate_title(req: GenerateTitleRequest) -> GenerateTitleResponse:
     # Limit message length for title generation (first 500 chars)
     truncated_message = req.first_message[:500]
 
-    title_prompt = f"""Generate a concise, descriptive title (max 50 characters) for a conversation that starts with:
+    title_prompt = f"""Generate a concise, descriptive title (max 35 characters) for a conversation that starts with:
 
 "{truncated_message}"
 
@@ -461,8 +461,9 @@ Requirements:
 - Be specific and capture the main topic
 - Use title case
 - No quotes or special characters around the title
-- Max 50 characters
+- Max 35 characters
 - Be direct and clear
+- If you can't fit the idea, use abbreviations
 
 Title:"""
 
@@ -471,9 +472,9 @@ Title:"""
         response = await moderator_model.ainvoke([HumanMessage(content=title_prompt)])
         title = response.content.strip()
 
-        # Ensure title length constraint
-        if len(title) > 50:
-            title = title[:47] + "..."
+        # Ensure title length constraint (35 chars max)
+        if len(title) > 35:
+            title = title[:32] + "..."
 
         # Track usage
         usage_acc = create_usage_accumulator()
