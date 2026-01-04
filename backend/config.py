@@ -24,31 +24,49 @@ def _optional_env(name: str) -> str | None:
 
 
 def _encode_pg_password(conn_str: str) -> str:
-    """Encode password in PostgreSQL connection URI if needed."""
+    """Encode password in PostgreSQL connection URI if needed.
+
+    Handles passwords with special characters like @, *, <, (, ), etc.
+    by properly URL-encoding them.
+    """
     # If it's a keyword=value style connection string, return as-is
     if not conn_str.startswith(("postgres://", "postgresql://")):
         return conn_str
 
     try:
-        parsed = urlparse(conn_str)
-        # If there's a password in the URL, re-encode it properly
-        if parsed.password:
-            # Reconstruct the netloc with properly encoded password
-            username = quote(parsed.username, safe="")
-            password = quote(parsed.password, safe="")
+        # Extract scheme and rest
+        scheme_end = conn_str.index("://") + 3
+        scheme = conn_str[:scheme_end]
+        rest = conn_str[scheme_end:]
 
-            if parsed.port:
-                netloc = f"{username}:{password}@{parsed.hostname}:{parsed.port}"
-            else:
-                netloc = f"{username}:{password}@{parsed.hostname}"
+        # Find the last @ which separates credentials from host
+        # (because password might contain @ symbols)
+        last_at = rest.rfind("@")
 
-            # Reconstruct the full URL
-            encoded = parsed._replace(netloc=netloc)
-            return urlunparse(encoded)
+        if last_at == -1:
+            # No credentials in URL
+            return conn_str
 
-        return conn_str
-    except Exception:
-        # If parsing fails, return the original string
+        credentials = rest[:last_at]
+        host_part = rest[last_at + 1:]
+
+        # Split credentials into username and password
+        if ":" in credentials:
+            username, password = credentials.split(":", 1)
+            # URL-encode both username and password to handle special chars
+            encoded_username = quote(username, safe="")
+            encoded_password = quote(password, safe="")
+            # Reconstruct the connection string
+            return f"{scheme}{encoded_username}:{encoded_password}@{host_part}"
+        else:
+            # Only username, no password
+            encoded_username = quote(credentials, safe="")
+            return f"{scheme}{encoded_username}@{host_part}"
+
+    except Exception as e:
+        # If parsing fails, log and return the original string
+        import logging
+        logging.debug(f"Failed to encode postgres password: {e}, using original")
         return conn_str
 
 
