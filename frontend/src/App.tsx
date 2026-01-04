@@ -1184,11 +1184,12 @@ export default function App() {
                 ) ?? [],
               }));
 
-              // Auto-generate title if this is the first message in a new conversation
-              const isFirstMessage = conversations[threadId]?.length === 0;
+              // Auto-generate title if this thread has a placeholder name
+              // (only the first message will trigger this since after first message,
+              // the title is updated to a real name, so placeholder check is sufficient)
               const isPlaceholderTitle = threadId.startsWith("Chat ");
 
-              if (isFirstMessage && isPlaceholderTitle) {
+              if (isPlaceholderTitle) {
                 // Generate title in background (don't await)
                 generateTitle(sanitizedQuestion).then((newTitle) => {
                   if (newTitle) {
