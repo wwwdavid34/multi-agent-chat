@@ -199,8 +199,18 @@ class DebateOrchestrator:
                         )
 
                 except Exception as e:
-                    logger.error(f"Error getting response from {agent.name}: {e}")
-                    responses[agent.name] = f"(Unable to generate response: {str(e)})"
+                    error_msg = str(e)
+                    logger.error(f"Error getting response from {agent.name}: {error_msg}")
+
+                    # Provide helpful error context
+                    if "model_not_found" in error_msg or "does not exist" in error_msg:
+                        responses[agent.name] = f"(Model error: Check model name and API access)"
+                    elif "401" in error_msg or "Unauthorized" in error_msg:
+                        responses[agent.name] = f"(API authentication error: Check API key)"
+                    elif "429" in error_msg or "rate limit" in error_msg.lower():
+                        responses[agent.name] = f"(Rate limit exceeded: Try again in a moment)"
+                    else:
+                        responses[agent.name] = f"(Unable to generate response: {error_msg[:100]})"
 
         except Exception as e:
             logger.error(f"Error during debate round: {e}")
