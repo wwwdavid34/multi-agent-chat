@@ -11,9 +11,11 @@ interface DebateViewerProps {
   stepReview?: boolean;
   debatePaused?: boolean;
   onContinue?: () => void;
+  tagged_panelists?: string[];
+  user_as_participant?: boolean;
 }
 
-export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = false, debatePaused = false, onContinue }: DebateViewerProps) {
+export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = false, debatePaused = false, onContinue, tagged_panelists = [], user_as_participant = false }: DebateViewerProps) {
   const [expandedRounds, setExpandedRounds] = useState<Set<number>>(() => {
     // Auto-expand the first round initially
     if (debateHistory.length > 0) {
@@ -141,22 +143,50 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
                     className="border-t border-border/30"
                   >
                     <div className="p-4 space-y-3">
+                      {/* User message in user-debate mode */}
+                      {user_as_participant && round.user_message && (
+                        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-accent font-semibold text-xs">
+                              U
+                            </div>
+                            <span className="text-xs font-semibold text-foreground">You</span>
+                          </div>
+                          <div className="text-xs leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
+                            <Markdown content={round.user_message} />
+                          </div>
+                        </div>
+                      )}
+
                       {Object.entries(round.panel_responses)
                         .filter(([_, response]) => response && typeof response === 'string' && response.trim())
                         .map(([name, response]) => {
                         const panelist = panelists.find((p) => p.name === name);
+                        const isTagged = tagged_panelists.includes(name);
+                        const isWatching = user_as_participant && !isTagged;
+
                         return (
                           <div
                             key={name}
-                            className="rounded-lg border border-border/30 p-3 bg-background hover:bg-muted/20 transition-colors group/response"
+                            className={`rounded-lg border p-3 transition-colors group/response ${
+                              isWatching
+                                ? "border-border/20 bg-muted/5"
+                                : "border-border/30 bg-background hover:bg-muted/20"
+                            }`}
                           >
                             <div className="flex items-center justify-between gap-3 mb-2">
                               <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-accent/10 flex items-center justify-center text-accent font-semibold text-xs">
+                                <div className={`w-6 h-6 rounded-full flex items-center justify-center font-semibold text-xs ${
+                                  isWatching
+                                    ? "bg-muted text-muted-foreground"
+                                    : "bg-accent/10 text-accent"
+                                }`}>
                                   {name.charAt(0).toUpperCase()}
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="text-xs font-semibold text-foreground">
+                                  <span className={`text-xs font-semibold ${
+                                    isWatching ? "text-muted-foreground" : "text-foreground"
+                                  }`}>
                                     {name}
                                   </span>
                                   {panelist && (
@@ -166,7 +196,7 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
                                   )}
                                 </div>
                               </div>
-                              {onCopy && (
+                              {!isWatching && onCopy && (
                                 <button
                                   type="button"
                                   onClick={() => onCopy(response)}
@@ -186,9 +216,15 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
                                 </button>
                               )}
                             </div>
-                            <div className="text-xs leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
-                              <Markdown content={response} />
-                            </div>
+                            {isWatching ? (
+                              <div className="text-xs italic text-muted-foreground">
+                                Watching this discussion...
+                              </div>
+                            ) : (
+                              <div className="text-xs leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
+                                <Markdown content={response} />
+                              </div>
+                            )}
                           </div>
                         );
                       })}

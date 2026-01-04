@@ -42,6 +42,8 @@ interface MessageEntry {
   debate_paused?: boolean; // Whether debate is paused waiting for user to continue
   stopped?: boolean; // Whether generation was stopped by user
   usage?: TokenUsage; // Token usage statistics for this exchange
+  user_as_participant?: boolean; // Whether user is participating in debate
+  tagged_panelists?: string[]; // Panelist names user tagged in this exchange
 }
 
 const parseJSON = <T,>(value: string | null, fallback: T): T => {
@@ -57,6 +59,12 @@ const DEFAULT_PANELISTS: PanelistConfigPayload[] = [
   { id: "panelist-1", name: "ChatGPT", provider: "openai", model: "" },
   { id: "panelist-2", name: "ChatGPT 2", provider: "openai", model: "" },
 ];
+const MODERATOR_PANELIST: PanelistConfigPayload = {
+  id: "moderator",
+  name: "Moderator",
+  provider: "openai",
+  model: "gpt-4o-mini",
+};
 const DEFAULT_DEBATE_MODE = false;
 const DEFAULT_MAX_DEBATE_ROUNDS = 3;
 const DEFAULT_STEP_REVIEW = false;
@@ -301,6 +309,8 @@ const MessageBubble = memo(function MessageBubble({
                   stepReview={entry.step_review}
                   debatePaused={entry.debate_paused}
                   onContinue={onContinueDebate}
+                  tagged_panelists={entry.tagged_panelists}
+                  user_as_participant={entry.user_as_participant}
                 />
               ) : !entry.stopped ? (
                 <>
@@ -1083,6 +1093,8 @@ export default function App() {
         max_debate_rounds: useMaxRounds,
         step_review: useStepReview,
         debate_history: [],
+        user_as_participant: userAsParticipant,
+        tagged_panelists: taggedPanelists,
       };
 
       setConversations((prev) => ({
@@ -1363,6 +1375,92 @@ export default function App() {
         setLoading(false);
         setLoadingStatus("Panel is thinking...");
         setAbortController(null); // Clean up abort controller
+        setActiveEntryId(null);
+      }
+    },
+    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
+  );
+
+  const handleExitUserDebate = useCallback(
+    async (entryId: string) => {
+      const entry = conversations[threadId]?.find((e) => e.id === entryId);
+      if (!entry || !entry.debate_paused) {
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      setActiveEntryId(entryId);
+      setEntryStatus(entryId, "Exiting debate...");
+
+      // Create abort controller for this request
+      const controller = new AbortController();
+      setAbortController(controller);
+
+      try {
+        await askPanelStream(
+          {
+            thread_id: threadId.trim(),
+            question: "", // Not needed for exit
+            attachments: [],
+            panelists: preparedPanelists,
+            provider_keys: sanitizedProviderKeys,
+            continue_debate: true,
+            exit_user_debate: true, // Signal user is exiting user-debate
+            debate_mode: entry.debate_mode,
+            max_debate_rounds: entry.max_debate_rounds,
+            step_review: entry.step_review,
+          },
+          {
+            onStatus: (message) => {
+              setLoadingStatus(message);
+              setEntryStatus(entryId, message);
+            },
+            onResult: (result) => {
+              clearEntryStatus(entryId);
+              // Debate complete - got final summary
+              setConversations((prev) => ({
+                ...prev,
+                [threadId]: prev[threadId]?.map((e) =>
+                  e.id === entryId
+                    ? {
+                        ...e,
+                        summary: result.summary,
+                        panel_responses: result.panel_responses,
+                        debate_paused: false,
+                        usage: result.usage,
+                      }
+                    : e
+                ) ?? [],
+              }));
+              setLoading(false);
+              setLoadingStatus("Panel is thinking...");
+              setActiveEntryId(null);
+            },
+            onError: (err) => {
+              setError(err.message);
+              setLoading(false);
+              setLoadingStatus("Panel is thinking...");
+              setActiveEntryId(null);
+              clearEntryStatus(entryId);
+            },
+          },
+          controller.signal
+        );
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.log('Exit debate aborted');
+          setLoading(false);
+          setLoadingStatus("Panel is thinking...");
+          setActiveEntryId(null);
+          clearEntryStatus(entryId);
+          return;
+        }
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      } finally {
+        setLoading(false);
+        setLoadingStatus("Panel is thinking...");
+        setAbortController(null);
         setActiveEntryId(null);
       }
     },
@@ -2099,6 +2197,23 @@ export default function App() {
           </header>
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {/* Moderator Card - Always Visible, Not Disableable */}
+            <div
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/40 bg-card/50 px-3 py-1.5"
+              title="Moderator - Always active"
+            >
+              <svg viewBox="0 0 24 24" className="w-3 h-3 text-amber-500" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z" />
+              </svg>
+              <span className="font-semibold text-[12px] text-foreground">
+                {MODERATOR_PANELIST.name}
+              </span>
+              <span className="text-muted-foreground text-[11px]">
+                · {PROVIDER_LABELS[MODERATOR_PANELIST.provider]}
+                {MODERATOR_PANELIST.model ? ` · ${MODERATOR_PANELIST.model}` : ""}
+              </span>
+            </div>
+
             {panelistSummaries.map((summary) => (
               <button
                 key={summary.id}
@@ -2216,6 +2331,20 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* Exit User-Debate Button */}
+              {activeEntry?.debate_paused && activeEntry?.user_as_participant && (
+                <div className="flex gap-2 px-4 pb-4">
+                  <button
+                    onClick={() => handleExitUserDebate(activeEntry.id)}
+                    disabled={loading}
+                    className="px-4 py-2 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-destructive/30"
+                  >
+                    Exit Debate
+                  </button>
+                </div>
+              )}
+
               <ChatComposer
                 loading={loading}
                 error={error}
