@@ -1963,8 +1963,8 @@ export default function App() {
         </div>
         <ul className="list-none p-0 m-0 flex flex-col gap-1.5 overflow-y-auto flex-1">
           {threads.map((id) => (
-            <li key={id} className="group">
-              <div className="flex items-center gap-1.5 relative">
+            <li key={id} className="group relative">
+              <div className="flex items-center relative">
                 {editingThreadId === id ? (
                   <input
                     ref={renameInputRef}
@@ -1981,7 +1981,7 @@ export default function App() {
                         cancelThreadRename();
                       }
                     }}
-                    className={`flex-1 px-3.5 py-2 rounded-lg border text-[13px] transition-all bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 ${
+                    className={`w-full px-3.5 py-2 rounded-lg border text-[13px] transition-all bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 ${
                       threadId === id
                         ? "border-accent/60"
                         : "border-border/60"
@@ -1990,7 +1990,7 @@ export default function App() {
                 ) : (
                   <button
                     type="button"
-                    className={`flex-1 flex items-center justify-between px-3.5 py-2 rounded-lg border text-[13px] transition-all ${
+                    className={`w-full flex items-center px-3.5 py-2 rounded-lg border text-[13px] transition-all ${
                       threadId === id
                         ? "border-accent/60 bg-accent/8 text-accent font-medium"
                         : "border-border/40 bg-transparent font-normal text-foreground hover:bg-muted/30 hover:border-border"
@@ -2002,9 +2002,9 @@ export default function App() {
                   </button>
                 )}
 
-                {/* Kebab menu - visible on hover or when open, hidden when editing */}
+                {/* Kebab menu - floating on right on hover, absolutely positioned */}
                 {editingThreadId !== id && (
-                <div className="relative" data-thread-menu>
+                <div className="absolute right-1 top-1/2 -translate-y-1/2" data-thread-menu>
                   <button
                     type="button"
                     onClick={(e) => {
