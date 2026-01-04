@@ -2238,15 +2238,10 @@ export default function App() {
         </div>
 
         {/* Chat section - full width with scrollbar at browser edge */}
-        <section className="flex flex-1 min-h-0 flex-col relative">
+        <section className={`flex flex-1 min-h-0 flex-col relative ${messages.length === 0 ? 'items-center justify-center' : ''}`}>
             {/* Scrollable messages area */}
-            <div className="flex-1 overflow-y-auto scroll-smooth" ref={messageListRef}>
-              <div className="flex flex-col gap-10 py-10 pb-16 mx-auto w-full max-w-3xl px-4 sm:px-6">
-                {messages.length === 0 && (
-                  <div className="flex-1 flex items-center justify-center">
-                    <p className="text-muted-foreground/60 text-center text-sm">Start a conversation by asking a question below.</p>
-                  </div>
-                )}
+            <div className={`${messages.length === 0 ? '' : 'flex-1'} overflow-y-auto scroll-smooth`} ref={messageListRef}>
+              <div className={`flex flex-col gap-10 py-10 pb-16 mx-auto w-full max-w-3xl px-4 sm:px-6 ${messages.length === 0 ? 'hidden' : ''}`}>
                 {messages.map((entry, index) => (
                   <MessageBubble
                     key={entry.id}
@@ -2342,6 +2337,7 @@ export default function App() {
               <ChatComposer
                 loading={loading}
                 error={error}
+                isNewChat={messages.length === 0}
                 onSend={handleSend}
                 onStop={stopGeneration}
                 onClearError={() => setError(null)}
@@ -2468,6 +2464,7 @@ export default function App() {
 interface ChatComposerProps {
   loading: boolean;
   error: string | null;
+  isNewChat?: boolean;
   onSend: (payload: {
     question: string;
     attachments: string[];
@@ -2483,6 +2480,7 @@ interface ChatComposerProps {
 function ChatComposer({
   loading,
   error,
+  isNewChat = false,
   onSend,
   onStop,
   onClearError,
@@ -2596,7 +2594,7 @@ function ChatComposer({
                   handleSubmit(event as any);
                 }
               }}
-              placeholder="Send a message..."
+              placeholder={isNewChat ? "Start conversation..." : "Send a message..."}
               rows={1}
               className="w-full border-none rounded-2xl px-4 md:px-5 pt-3.5 md:pt-4 pb-14 md:pb-16 text-sm md:text-[15px] font-inherit resize-none overflow-y-hidden bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:outline-none leading-relaxed"
             />
