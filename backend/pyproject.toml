@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multi-agent-panel"
-version = "0.5.0"
-description = "LangGraph-based AI multi-agent discussion panel"
+version = "0.6.0"
+description = "AI multi-agent discussion panel powered by AG2 (AutoGen) and LangGraph"
 authors = [{name = "Codex"}]
 requires-python = ">=3.10"
 dependencies = [

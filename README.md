@@ -1,6 +1,11 @@
 # AI Multi-Agent Discussion Panel
 
-LangGraph + FastAPI backend with a Vite/React frontend for running multi-agent discussions that persist across a thread ID.
+A multi-engine AI debate platform powered by **AG2 (AutoGen)** and LangGraph, with FastAPI backend and React frontend. Run multi-agent discussions with streaming responses, multi-provider support (OpenAI, Gemini, Claude, Grok), and persistent conversation threads.
+
+## What's New in v0.6.0
+- **AG2 Engine Support**: Added AG2 (AutoGen v0.3.0+) as the primary debate engine alongside LangGraph
+- **Multi-Provider Support**: Full support for OpenAI, Google Gemini, Anthropic Claude, and xAI Grok
+- **Enhanced UX**: Improved panelist naming validation and regenerate UI consistency
 
 ## Quick Start
 
