@@ -86,6 +86,7 @@ class AG2DebateService:
         thread_id: str,
         question: str,
         panelists: List[Dict[str, Any]],
+        provider_keys: Optional[Dict[str, str]] = None,
         **config,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Start new debate and stream SSE events.
@@ -97,6 +98,7 @@ class AG2DebateService:
             thread_id: Unique thread identifier
             question: Debate question/topic
             panelists: List of panelist configurations
+            provider_keys: Dict mapping provider names to API keys
             **config: Additional config (debate_mode, max_rounds, step_review, etc.)
 
         Yields:
@@ -116,6 +118,7 @@ class AG2DebateService:
             "user_as_participant": config.get("user_as_participant", False),
             "tagged_panelists": config.get("tagged_panelists", []),
             "panelists": panelists,
+            "provider_keys": provider_keys or {},
             "question": question,
             "summary": None,
             "panel_responses": {},

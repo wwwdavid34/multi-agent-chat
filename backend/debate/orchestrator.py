@@ -10,7 +10,12 @@ from typing import Dict, Any, List, Optional
 
 from .state import DebateState, DebateRound
 from .agents import create_panelist_agent, create_moderator_agent, create_user_proxy, create_search_tool
-from config import get_openai_api_key
+from config import (
+    get_claude_api_key,
+    get_gemini_api_key,
+    get_grok_api_key,
+    get_openai_api_key,
+)
 
 try:
     import autogen as ag2
@@ -95,15 +100,31 @@ class DebateOrchestrator:
         # Create panelist agents from configuration
         self.agents = []
         panelists = self.state.get("panelists", [])
+        provider_keys = self.state.get("provider_keys", {})
 
         for panelist_config in panelists:
             try:
                 provider = panelist_config.get("provider", "openai")
-                api_key = panelist_config.get("api_key", get_openai_api_key())
+
+                # Get API key for this provider from provider_keys, with fallbacks
+                if provider in provider_keys and provider_keys[provider]:
+                    api_key = provider_keys[provider]
+                elif provider == "openai":
+                    api_key = get_openai_api_key()
+                elif provider in {"gemini", "google"}:
+                    api_key = get_gemini_api_key()
+                elif provider in {"claude", "anthropic"}:
+                    api_key = get_claude_api_key()
+                elif provider in {"xai", "grok"}:
+                    api_key = get_grok_api_key()
+                else:
+                    # Fallback to OpenAI if provider unknown
+                    api_key = get_openai_api_key()
+                    logger.warning(f"Unknown provider '{provider}', falling back to OpenAI API key")
 
                 agent = create_panelist_agent(panelist_config, api_key)
                 self.agents.append(agent)
-                logger.info(f"Created agent: {panelist_config.get('name')}")
+                logger.info(f"Created agent: {panelist_config.get('name')} (provider: {provider})")
             except Exception as e:
                 logger.error(f"Failed to create agent for {panelist_config}: {e}")
                 raise
@@ -122,13 +143,43 @@ class DebateOrchestrator:
             max_round=50,  # Safety limit for AG2's internal loop
         )
 
+        # Choose a manager LLM config that matches an available provider so we
+        # don't hard-require OpenAI when running Gemini/Claude-only setups.
+        def _manager_config_list() -> list[dict]:
+            provider_pref = [
+                ("openai", "gpt-4o-mini", get_openai_api_key, {"api_type": "openai"}),
+                ("google", "gemini-1.5-flash", get_gemini_api_key, {"api_type": "google"}),
+                ("anthropic", "claude-3-5-haiku-20241022", get_claude_api_key, {"api_type": "anthropic"}),
+                ("xai", "grok-beta", get_grok_api_key, {"api_type": "openai"}),
+            ]
+
+            for provider, default_model, key_fn, extra in provider_pref:
+                # Prefer explicit provider_keys passed in
+                if provider_keys.get(provider):
+                    return [{
+                        "model": default_model,
+                        "api_key": provider_keys[provider],
+                        **extra,
+                    }]
+
+                # Fall back to environment-based keys if available
+                try:
+                    api_key = key_fn()
+                    return [{
+                        "model": default_model,
+                        "api_key": api_key,
+                        **extra,
+                    }]
+                except Exception:
+                    continue
+
+            raise RuntimeError("No valid API key available to initialize GroupChatManager")
+
         # Create GroupChatManager to orchestrate the chat
         try:
             self.manager = GroupChatManager(
                 groupchat=self.groupchat,
-                llm_config={
-                    "config_list": [{"model": "gpt-4o-mini", "api_key": get_openai_api_key()}]
-                },
+                llm_config={"config_list": _manager_config_list()},
                 is_termination_msg=lambda x: "TERMINATE" in x.get("content", ""),
             )
         except Exception as e:
@@ -183,11 +234,22 @@ class DebateOrchestrator:
                         sender=self.manager,
                     )
 
-                    if reply:
-                        responses[agent.name] = reply
+                    # Handle different reply formats from different providers
+                    # Some providers return strings, others return dicts
+                    if isinstance(reply, dict):
+                        # Extract content from dict response (e.g., Gemini)
+                        reply_text = reply.get("content") or str(reply)
+                    elif isinstance(reply, str):
+                        reply_text = reply
+                    else:
+                        # Fallback: convert to string
+                        reply_text = str(reply) if reply else ""
+
+                    if reply_text and reply_text.strip():
+                        responses[agent.name] = reply_text
                         self.groupchat.messages.append({
                             "role": "assistant",
-                            "content": reply,
+                            "content": reply_text,
                             "name": agent.name,
                         })
 
@@ -195,7 +257,7 @@ class DebateOrchestrator:
                         await self._emit_event(
                             "panelist_response",
                             panelist=agent.name,
-                            response=reply,
+                            response=reply_text,
                         )
 
                 except Exception as e:
@@ -234,8 +296,29 @@ class DebateOrchestrator:
         if "debate_history" not in self.state:
             self.state["debate_history"] = []
         self.state["debate_history"].append(round_data)
+        
+        # Update panel_responses in state so they're included in result event
+        self.state["panel_responses"] = responses
 
         return round_data
+
+    def _has_valid_responses(self, responses: Dict[str, str]) -> bool:
+        """Check if responses dict contains actual panelist responses (not errors).
+
+        Error messages start with "(" like "(Model error: ...)"
+        Valid responses are actual panelist text.
+
+        Args:
+            responses: Dict of panelist_name -> response_text
+
+        Returns:
+            True if at least one valid response exists
+        """
+        for response in responses.values():
+            # Valid responses must be non-empty and not error placeholders
+            if response and response.strip() and not response.startswith("("):
+                return True
+        return False
 
     async def _check_consensus(self, responses: Dict[str, str]) -> bool:
         """Simplified consensus checking.
@@ -253,6 +336,10 @@ class DebateOrchestrator:
         """
         # User-debate: never auto-consensus
         if self.state.get("user_as_participant"):
+            return False
+
+        # No valid responses: no consensus
+        if not self._has_valid_responses(responses):
             return False
 
         # Single panelist: auto-consensus
@@ -293,6 +380,24 @@ class DebateOrchestrator:
         await self._emit_event("status", message="Moderating the discussion...")
 
         try:
+            # Verify debate history has valid panelist responses
+            if "debate_history" not in self.state or not self.state["debate_history"]:
+                error_msg = "No debate history available for moderation"
+                logger.warning(error_msg)
+                return error_msg
+
+            # Check that at least one debate round has valid responses
+            has_valid_responses = False
+            for round_data in self.state["debate_history"]:
+                if self._has_valid_responses(round_data.get("panel_responses", {})):
+                    has_valid_responses = True
+                    break
+
+            if not has_valid_responses:
+                error_msg = "No valid panelist responses found in debate history"
+                logger.warning(error_msg)
+                return error_msg
+
             # Get all messages from group chat
             debate_history = "\n".join(
                 f"{m.get('name', 'User')}: {m.get('content', '')}"
@@ -349,6 +454,14 @@ Keep the summary to 2-3 paragraphs."""
                     question = self.state.get("question", "")
                     round_result = await self.run_debate_round(question)
                     self.state["debate_round"] = self.state.get("debate_round", 0) + 1
+
+                    # Check if panelists provided valid responses
+                    if not self._has_valid_responses(round_result["panel_responses"]):
+                        error_msg = "All panelists failed to respond. Unable to continue debate."
+                        logger.error(error_msg)
+                        await self._emit_event("error", message=error_msg)
+                        self.state["phase"] = "finished"
+                        return self.state
 
                     # Deterministic phase transition logic
                     if round_result["consensus_reached"]:

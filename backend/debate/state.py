@@ -59,6 +59,7 @@ class DebateState(TypedDict, total=False):
 
     # Panelist configuration
     panelists: Optional[List[Dict[str, Any]]]  # PanelistConfig list
+    provider_keys: Optional[Dict[str, str]]  # API keys for each provider
 
 
 class DebateResult(TypedDict, total=False):
