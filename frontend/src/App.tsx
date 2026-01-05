@@ -57,7 +57,7 @@ const parseJSON = <T,>(value: string | null, fallback: T): T => {
 const MAX_PANELISTS = 6;
 const DEFAULT_PANELISTS: PanelistConfigPayload[] = [
   { id: "panelist-1", name: "ChatGPT", provider: "openai", model: "" },
-  { id: "panelist-2", name: "ChatGPT 2", provider: "openai", model: "" },
+  { id: "panelist-2", name: "ChatGPT_2", provider: "openai", model: "" },
 ];
 const MODERATOR_PANELIST: PanelistConfigPayload = {
   id: "moderator",
@@ -968,18 +968,19 @@ export default function App() {
   }, []);
 
   // Parse @ mentions from user input to extract tagged panelist names
+  // Names cannot contain spaces, only letters, numbers, underscores, and hyphens
   const parseTaggedPanelists = useCallback(
     (text: string): string[] => {
-      // Match @Name patterns (case-insensitive, fuzzy matching)
-      const mentions = text.match(/@(\w+(?:\s+\w+)*)/g) || [];
+      // Match @Name patterns - only word characters, underscores, hyphens (no spaces)
+      const mentions = text.match(/@([a-zA-Z0-9_-]+)/g) || [];
       const tagged: string[] = [];
 
       for (const mention of mentions) {
-        const searchTerm = mention.slice(1).toLowerCase(); // Remove @ and lowercase
+        const tagName = mention.slice(1); // Remove @
 
-        // Find matching panelist using fuzzy match
-        const match = panelists.find(p =>
-          p.name.toLowerCase().includes(searchTerm) || searchTerm.includes(p.name.toLowerCase())
+        // Find exact matching panelist (case-insensitive)
+        const match = panelists.find(p => 
+          p.name.toLowerCase() === tagName.toLowerCase()
         );
 
         if (match) {

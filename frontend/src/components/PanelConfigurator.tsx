@@ -10,6 +10,7 @@ import type {
 import { useMemo, useState } from "react";
 import { loadPresets, savePreset, deletePreset, type PanelistPreset } from "../lib/presetManager";
 import { getModelCapabilities } from "../lib/modelCapabilities";
+import { validatePanelistName } from "../lib/panelistNaming";
 
 interface PanelConfiguratorProps {
   open: boolean;
@@ -54,6 +55,7 @@ export function PanelConfigurator({
   const [newPresetName, setNewPresetName] = useState("");
   const [newPresetDescription, setNewPresetDescription] = useState("");
   const [showManagePresets, setShowManagePresets] = useState(false);
+  const [nameErrors, setNameErrors] = useState<Record<string, string | null>>({});
 
   const toggleKeyVisibility = (providerId: string) => {
     setShowKeys((prev) => ({ ...prev, [providerId]: !prev[providerId] }));
@@ -467,12 +469,29 @@ export function PanelConfigurator({
                   return (
                     <div key={panelist.id} className="rounded-lg border border-border p-4 bg-card">
                       <div className="flex items-center justify-between gap-3">
-                        <input
-                          value={panelist.name}
-                          onChange={(event) => onPanelistChange(panelist.id, { name: event.target.value })}
-                          placeholder="Panelist name"
-                          className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-base font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
-                        />
+                        <div className="flex-1">
+                          <input
+                            value={panelist.name}
+                            onChange={(event) => {
+                              const newName = event.target.value;
+                              onPanelistChange(panelist.id, { name: newName });
+                              const error = validatePanelistName(newName);
+                              setNameErrors(prev => ({ ...prev, [panelist.id]: error }));
+                            }}
+                            placeholder="Panelist name (no spaces)"
+                            className={`w-full rounded-lg border ${nameErrors[panelist.id] ? 'border-destructive focus:ring-destructive/50' : 'border-border focus:ring-accent/50'} bg-background px-3 py-2 text-base font-semibold text-foreground focus:outline-none focus:ring-2`}
+                          />
+                          {nameErrors[panelist.id] && (
+                            <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+                              <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="12" y1="8" x2="12" y2="12" />
+                                <line x1="12" y1="16" x2="12.01" y2="16" />
+                              </svg>
+                              {nameErrors[panelist.id]}
+                            </p>
+                          )}
+                        </div>
                         <button
                           type="button"
                           onClick={() => onRemovePanelist(panelist.id)}
