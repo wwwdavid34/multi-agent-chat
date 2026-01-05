@@ -24,6 +24,13 @@ dependencies = [
     "tavily-python>=0.3.0",
     "ag2>=0.3.0",
     "asyncpg>=0.29.0",
+    # Provider SDKs needed for AG2 multi-provider support
+    "google-generativeai>=0.3.0",
+    "anthropic>=0.18.0",
+    # AG2 Gemini extra dependencies
+    "google-cloud-aiplatform>=1.38.0",
+    "pillow>=10.0.0",
+    "jsonschema>=4.0.0",
 ]
 
 [project.optional-dependencies]

@@ -36,16 +36,58 @@ def create_panelist_agent(config: Dict[str, Any], api_key: str) -> "AssistantAge
         raise RuntimeError("ag2 is not installed. Install with: pip install ag2")
 
     model_name = config.get("model", "gpt-4o-mini")
+    provider = config.get("provider", "openai").lower()
     panelist_name = config.get("name", "Panelist")
+
+    logger.info(f"Creating agent '{panelist_name}' with provider='{provider}', model='{model_name}'")
+
+    # Build config_list entry based on provider
+    config_entry = {
+        "model": model_name,
+        "api_key": api_key,
+    }
+
+    # Provide price for newer OpenAI aliases AG2 doesn't know yet to silence warnings
+    price_overrides = {
+        "chatgpt-4o-latest": [0.005, 0.015],  # $5 / $15 per 1M tokens
+    }
+    if model_name in price_overrides:
+        config_entry["price"] = price_overrides[model_name]
+
+    # Provider-specific routing for AG2
+    # AG2 uses different client classes based on api_type
+    if provider == "gemini" or provider == "google":
+        # Gemini via Google Generative AI
+        # AG2 expects api_type="google" (not "gemini")
+        config_entry.update({
+            "api_type": "google",
+        })
+        logger.info(f"Configured Gemini agent with api_type='google'")
+    elif provider == "anthropic" or provider == "claude":
+        # Claude via Anthropic
+        config_entry.update({
+            "api_type": "anthropic",
+        })
+        logger.info(f"Configured Anthropic agent with api_type='anthropic'")
+    elif provider in {"xai", "grok"}:
+        # xAI Grok: OpenAI-compatible API
+        config_entry.update({
+            "api_type": "openai",
+            "base_url": "https://api.x.ai/v1",
+        })
+        logger.info(f"Configured Grok agent with base_url='https://api.x.ai/v1'")
+    else:
+        # Default to OpenAI
+        config_entry.update({
+            "api_type": "openai",
+        })
+        logger.info(f"Configured OpenAI agent")
+
+    logger.debug(f"AG2 config_entry: {config_entry}")
 
     # LLM configuration for AG2
     llm_config = {
-        "config_list": [
-            {
-                "model": model_name,
-                "api_key": api_key,
-            }
-        ],
+        "config_list": [config_entry],
         "temperature": 0.2,  # Slightly opinionated but consistent
     }
 

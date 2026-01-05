@@ -348,3 +348,89 @@ class TestDebateEventTypes:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestPanelistFailureValidation:
+    """Test that moderator doesn't answer when panelists fail."""
+
+    def test_has_valid_responses_detects_errors(self):
+        """Test _has_valid_responses correctly identifies error messages."""
+        event_queue = asyncio.Queue()
+        state: DebateState = {
+            "thread_id": "test",
+            "phase": "init",
+            "debate_round": 0,
+            "max_rounds": 3,
+            "consensus_reached": False,
+            "panelists": [],
+            "debate_mode": True,
+            "user_as_participant": False,
+            "tagged_panelists": [],
+        }
+        orchestrator = DebateOrchestrator(state, event_queue)
+
+        # All error responses
+        error_responses = {
+            "GPT-4": "(Model error: Check model name and API access)",
+            "Claude": "(API authentication error: Check API key)",
+        }
+        assert not orchestrator._has_valid_responses(error_responses)
+
+        # Mix of valid and error
+        mixed_responses = {
+            "GPT-4": "This is a valid response",
+            "Claude": "(API error)",
+        }
+        assert orchestrator._has_valid_responses(mixed_responses)
+
+        # All valid responses
+        valid_responses = {
+            "GPT-4": "Valid response from GPT-4",
+            "Claude": "Valid response from Claude",
+        }
+        assert orchestrator._has_valid_responses(valid_responses)
+
+        # Empty responses
+        empty_responses: dict = {}
+        assert not orchestrator._has_valid_responses(empty_responses)
+
+        # Whitespace-only responses
+        whitespace_responses = {
+            "GPT-4": "   ",
+            "Claude": "\n\t",
+        }
+        assert not orchestrator._has_valid_responses(whitespace_responses)
+
+    @pytest.mark.asyncio
+    async def test_consensus_false_for_error_responses(self):
+        """Test consensus returns False when all responses are errors."""
+        event_queue = asyncio.Queue()
+        state: DebateState = {
+            "thread_id": "test",
+            "phase": "init",
+            "debate_round": 0,
+            "max_rounds": 3,
+            "consensus_reached": False,
+            "panelists": [
+                {"id": "gpt", "name": "GPT-4", "provider": "openai", "model": "gpt-4o-mini"},
+                {"id": "claude", "name": "Claude", "provider": "anthropic", "model": "claude-3-5-haiku-20241022"},
+            ],
+            "debate_mode": True,
+            "user_as_participant": False,
+            "tagged_panelists": [],
+        }
+        orchestrator = DebateOrchestrator(state, event_queue)
+
+        # Mock the moderator to avoid real API calls
+        orchestrator.moderator = MagicMock()
+
+        error_responses = {
+            "GPT-4": "(Model error: Check model name and API access)",
+            "Claude": "(API authentication error: Check API key)",
+        }
+
+        # Should return False without calling moderator
+        consensus = await orchestrator._check_consensus(error_responses)
+        assert consensus is False
+        # Moderator should not be called since we detected no valid responses
+        orchestrator.moderator.generate_reply.assert_not_called()
