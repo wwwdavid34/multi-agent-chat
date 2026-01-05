@@ -224,6 +224,7 @@ async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
                         thread_id=req.thread_id,
                         question=req.question,
                         panelists=[p.model_dump() for p in req.panelists] if req.panelists else [],
+                        provider_keys=req.provider_keys or {},
                         debate_mode=req.debate_mode or False,
                         max_debate_rounds=req.max_debate_rounds or 3,
                         step_review=req.step_review or False,
