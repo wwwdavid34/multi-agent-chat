@@ -40,8 +40,8 @@ export function RegenerateModal({
   if (!open) return null;
 
   const defaultRegenerateIcon = (
-    <svg viewBox="0 0 24 24" className="w-5 h-5 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
+    <svg viewBox="0 0 24 24" className="w-5 h-5 text-accent" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 12a8 8 0 0 1 8-8 8 8 0 0 1 6.18 2.82l2.82-2.82M20 4v6h-6M20 12a8 8 0 0 1-8 8 8 8 0 0 1-6.18-2.82l-2.82 2.82M4 20v-6h6" />
     </svg>
   );
 
@@ -199,8 +199,8 @@ export function RegenerateModal({
               className="px-4 py-2 rounded-lg bg-accent text-accent-foreground text-sm font-medium hover:opacity-90 transition-opacity flex items-center gap-2"
             >
               {confirmIcon ?? (
-                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6m6 0a9 9 0 0 1-15-6.7L3 16" />
+                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 12a8 8 0 0 1 8-8 8 8 0 0 1 6.18 2.82l2.82-2.82M20 4v6h-6M20 12a8 8 0 0 1-8 8 8 8 0 0 1-6.18-2.82l-2.82 2.82M4 20v-6h6" />
                 </svg>
               )}
               {confirmLabel}
