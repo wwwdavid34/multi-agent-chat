@@ -31,6 +31,10 @@ dependencies = [
     "google-cloud-aiplatform>=1.38.0",
     "pillow>=10.0.0",
     "jsonschema>=4.0.0",
+    # Authentication dependencies
+    "google-auth>=2.25.2",  # Google OAuth token verification
+    "PyJWT>=2.8.0",          # JWT token generation
+    "cryptography>=41.0.7",  # AES encryption for API keys
 ]
 
 [project.optional-dependencies]

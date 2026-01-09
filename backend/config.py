@@ -142,3 +142,84 @@ def get_debate_engine() -> str:
     if engine not in {"langgraph", "ag2"}:
         raise ValueError(f"Invalid DEBATE_ENGINE: {engine}. Must be 'langgraph' or 'ag2'")
     return engine
+
+
+# ============================================================================
+# Authentication Configuration
+# ============================================================================
+
+
+@lru_cache(maxsize=None)
+def get_google_client_id() -> str:
+    """Get Google OAuth client ID.
+
+    Required for Google OAuth authentication.
+    Get this from Google Cloud Console > APIs & Services > Credentials.
+    """
+    client_id = _optional_env("GOOGLE_CLIENT_ID")
+    if not client_id:
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID environment variable not set. "
+            "See GOOGLE_OAUTH_SETUP.md for setup instructions."
+        )
+    return client_id
+
+
+@lru_cache(maxsize=None)
+def get_jwt_secret_key() -> str:
+    """Get JWT secret key for token signing.
+
+    Generate with: openssl rand -hex 32
+    """
+    secret = _optional_env("JWT_SECRET_KEY")
+    if not secret:
+        raise RuntimeError(
+            "JWT_SECRET_KEY environment variable not set. "
+            "Generate one with: openssl rand -hex 32"
+        )
+    if len(secret) < 32:
+        raise RuntimeError(
+            "JWT_SECRET_KEY is too short (minimum 32 characters). "
+            "Generate a new one with: openssl rand -hex 32"
+        )
+    return secret
+
+
+@lru_cache(maxsize=None)
+def get_encryption_master_key() -> str:
+    """Get encryption master key for API key storage.
+
+    Generate with: python -c 'import os, base64; print(base64.b64encode(os.urandom(32)).decode())'
+    """
+    key = _optional_env("ENCRYPTION_MASTER_KEY")
+    if not key:
+        raise RuntimeError(
+            "ENCRYPTION_MASTER_KEY environment variable not set. "
+            "Generate one with: python -c 'import os, base64; "
+            "print(base64.b64encode(os.urandom(32)).decode())'"
+        )
+    return key
+
+
+@lru_cache(maxsize=None)
+def get_frontend_url() -> str:
+    """Get frontend URL for CORS configuration.
+
+    Default: http://localhost:5173 for development
+    Production: https://chat.yourdomain.com
+    """
+    return os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+
+def is_auth_enabled() -> bool:
+    """Check if authentication is fully configured.
+
+    Returns True if all required auth environment variables are set.
+    """
+    try:
+        get_google_client_id()
+        get_jwt_secret_key()
+        get_encryption_master_key()
+        return True
+    except RuntimeError:
+        return False

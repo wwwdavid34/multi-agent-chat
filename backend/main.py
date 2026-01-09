@@ -15,7 +15,8 @@ from pydantic import BaseModel
 
 from panel_graph import panel_graph, get_storage_mode
 from provider_clients import ProviderName, fetch_provider_models
-from config import get_debate_engine, get_pg_conn_str, use_in_memory_checkpointer
+from config import get_debate_engine, get_pg_conn_str, use_in_memory_checkpointer, get_frontend_url, is_auth_enabled
+from routers import auth
 
 # Initialize logger early so it's available in all functions
 logger = logging.getLogger(__name__)
@@ -51,13 +52,19 @@ async def get_ag2_service():
 
     return _ag2_service
 
+# Configure CORS
+# Note: In production, restrict to specific origins for security
+frontend_url = get_frontend_url()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[frontend_url, "*"],  # TODO: Remove "*" in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include authentication router
+app.include_router(auth.router)
 
 
 @app.on_event("startup")
@@ -80,6 +87,13 @@ async def startup_event():
             logger.info("=" * 80)
             logger.info("✓ LangGraph backend is ACTIVE (default)")
             logger.info(f"✓ Storage mode: {storage_mode}")
+
+        # Log authentication status
+        if is_auth_enabled():
+            logger.info("🔐 AUTHENTICATION: Enabled (Google OAuth + JWT)")
+        else:
+            logger.info("⚠️  AUTHENTICATION: Disabled (missing env variables)")
+            logger.info("   See GOOGLE_OAUTH_SETUP.md for setup instructions")
 
         logger.info("=" * 80)
     except Exception as e:
@@ -135,6 +149,18 @@ class GenerateTitleRequest(BaseModel):
 class GenerateTitleResponse(BaseModel):
     title: str
     usage: dict[str, int] | None = None
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for load balancers and monitoring."""
+    from datetime import datetime
+
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "0.6.0",
+    }
 
 
 @app.post("/ask", response_model=AskResponse)

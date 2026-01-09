@@ -1,11 +1,28 @@
 import type { AskRequestBody, AskResponse, DebateRound } from "./types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:8000`;
+
+/**
+ * Get authentication headers including JWT token if available
+ */
+function getAuthHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+
+  // Add Authorization header if token exists
+  const token = localStorage.getItem("auth_token");
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  return headers;
+}
 
 export async function askPanel(body: AskRequestBody): Promise<AskResponse> {
   const res = await fetch(`${API_BASE_URL}/ask`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -40,7 +57,7 @@ export async function askPanelStream(
 ): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/ask-stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify(body),
     signal,
   });
