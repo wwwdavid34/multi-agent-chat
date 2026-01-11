@@ -3,6 +3,11 @@
 .env.*
 !.env.example
 !.env.docker.example
+!.env.development.example
+!.env.production.example
+!frontend/.env.example
+!frontend/.env.development.example
+!frontend/.env.production.example
 
 # Virtual environments
 .venv/
@@ -56,3 +61,9 @@ Thumbs.db
 *.swo
 .idea/
 .vscode/
+
+# Deployment and backups
+backups/
+*.sql
+*.log
+/var/log/

@@ -8,8 +8,10 @@ import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 
-from .state import DebateState, DebateRound
+from .state import DebateState, DebateRound, QualityMetrics
 from .agents import create_panelist_agent, create_moderator_agent, create_user_proxy, create_search_tool
+from .evaluators import StanceExtractor, ArgumentParser, ConcessionDetector, ResponsivenessScorer
+from .persistence import DebateStorage
 from config import (
     get_claude_api_key,
     get_gemini_api_key,
@@ -62,19 +64,33 @@ class DebateOrchestrator:
     - Pause/resume logic
     """
 
-    def __init__(self, state: DebateState, event_queue: asyncio.Queue):
+    def __init__(self, state: DebateState, event_queue: asyncio.Queue, storage: Optional[DebateStorage] = None):
         """Initialize orchestrator with state and event queue.
 
         Args:
             state: Initial debate state
             event_queue: Async queue for streaming events to frontend
+            storage: Optional storage backend for quality tracking
         """
         self.state = state
         self.queue = event_queue
+        self.storage = storage
         self.agents: List[Any] = []
         self.groupchat: Optional[Any] = None
         self.manager: Optional[Any] = None
         self.moderator: Optional[Any] = None
+        
+        # Initialize evaluators for quality tracking
+        try:
+            self.stance_extractor = StanceExtractor()
+            self.argument_parser = ArgumentParser()
+            self.concession_detector = ConcessionDetector()
+            self.responsiveness_scorer = ResponsivenessScorer()
+            self.evaluators_enabled = True
+            logger.info("Quality evaluators initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize evaluators: {e}. Quality tracking disabled.")
+            self.evaluators_enabled = False
 
     async def _emit_event(self, event_type: str, **kwargs) -> None:
         """Emit SSE event to frontend.
@@ -299,8 +315,284 @@ class DebateOrchestrator:
         
         # Update panel_responses in state so they're included in result event
         self.state["panel_responses"] = responses
+        
+        # Run quality evaluation if enabled
+        if self.evaluators_enabled and self.storage:
+            await self._evaluate_round_quality(round_number, responses)
 
         return round_data
+    
+    async def _evaluate_round_quality(self, round_number: int, responses: Dict[str, str]) -> None:
+        """Run quality evaluators on debate round responses.
+        
+        Extracts:
+        - Stances (position, confidence)
+        - Arguments (claims, evidence, challenges)
+        - Concessions (mind changes)
+        - Responsiveness scores (engagement metrics)
+        
+        Args:
+            round_number: Current debate round number
+            responses: Dict of panelist_name -> response_text
+        """
+        thread_id = self.state["thread_id"]
+        
+        await self._emit_event("status", message="Analyzing debate quality...")
+        
+        try:
+            # Get previous round arguments for responsiveness scoring
+            previous_claims = []
+            if round_number > 0:
+                previous_claims = await self.storage.get_round_arguments(thread_id, round_number - 1)
+            
+            # Track extracted data for this round
+            round_stances = {}
+            round_arguments = []
+            quality_metrics = QualityMetrics(
+                responsiveness_scores={},
+                claims_addressed={},
+                claims_missed={},
+                tags_used={},
+                concessions_detected=[],
+                evidence_strength={}
+            )
+            
+            # Process each panelist response
+            for panelist_name, response in responses.items():
+                # Skip error responses
+                if not response or response.startswith("("):
+                    continue
+                
+                # 1. Extract stance
+                previous_stance = await self.storage.get_previous_stance(
+                    thread_id, panelist_name, round_number
+                )
+                stance_data = await self.stance_extractor.extract_stance(
+                    panelist_name, response, previous_stance
+                )
+                round_stances[panelist_name] = stance_data
+                
+                # Save stance to database
+                await self.storage.save_stance(
+                    thread_id=thread_id,
+                    round_number=round_number,
+                    panelist_name=stance_data["panelist_name"],
+                    stance=stance_data["stance"],
+                    core_claim=stance_data["core_claim"],
+                    confidence=stance_data["confidence"],
+                    changed_from_previous=stance_data["changed_from_previous"],
+                    change_explanation=stance_data.get("change_explanation")
+                )
+                
+                # Emit stance event
+                await self._emit_event(
+                    "stance_extracted",
+                    panelist=panelist_name,
+                    stance=stance_data["stance"],
+                    confidence=stance_data["confidence"],
+                    changed=stance_data["changed_from_previous"]
+                )
+                
+                # 2. Parse arguments
+                arguments = await self.argument_parser.parse_arguments(
+                    panelist_name, response, previous_claims
+                )
+                
+                # Save arguments to database
+                for arg in arguments:
+                    arg_id = await self.storage.save_argument_unit(
+                        thread_id=thread_id,
+                        round_number=round_number,
+                        panelist_name=arg["panelist_name"],
+                        unit_type=arg["unit_type"],
+                        content=arg["content"],
+                        target_claim_id=arg.get("target_claim_id"),
+                        confidence=arg.get("confidence")
+                    )
+                    arg["id"] = arg_id
+                    round_arguments.append(arg)
+                
+                # 3. Detect concessions
+                concession = await self.concession_detector.detect_concession(
+                    panelist_name, response
+                )
+                
+                if concession:
+                    # Save as special argument unit
+                    concession_id = await self.storage.save_argument_unit(
+                        thread_id=thread_id,
+                        round_number=round_number,
+                        panelist_name=panelist_name,
+                        unit_type="concession",
+                        content=concession["what_was_conceded"],
+                        confidence=1.0,
+                        metadata=concession
+                    )
+                    quality_metrics["concessions_detected"].append(concession_id)
+                    
+                    # Emit concession event
+                    await self._emit_event(
+                        "concession_detected",
+                        panelist=panelist_name,
+                        explanation=concession["explanation"],
+                        what_conceded=concession["what_was_conceded"]
+                    )
+                
+                # 4. Score responsiveness (except first round)
+                if round_number > 0 and previous_claims:
+                    # Get opponent claims only
+                    opponent_claims = [
+                        claim for claim in previous_claims
+                        if claim.get("panelist_name") != panelist_name
+                    ]
+                    
+                    responsiveness = await self.responsiveness_scorer.score_responsiveness(
+                        panelist_name, response, opponent_claims
+                    )
+                    
+                    # Save responsiveness score
+                    await self.storage.save_responsiveness_score(
+                        thread_id=thread_id,
+                        round_number=round_number,
+                        panelist_name=panelist_name,
+                        score=responsiveness["score"],
+                        claims_addressed=responsiveness["claims_addressed"],
+                        claims_missed=responsiveness["claims_missed"],
+                        tags_used=responsiveness["tags_used"],
+                        missed_arguments=responsiveness.get("missed_arguments", [])
+                    )
+                    
+                    # Update quality metrics
+                    quality_metrics["responsiveness_scores"][panelist_name] = responsiveness["score"]
+                    quality_metrics["claims_addressed"][panelist_name] = responsiveness["claims_addressed"]
+                    quality_metrics["claims_missed"][panelist_name] = responsiveness["claims_missed"]
+                    quality_metrics["tags_used"][panelist_name] = responsiveness["tags_used"]
+                    
+                    # Emit responsiveness event
+                    await self._emit_event(
+                        "responsiveness_score",
+                        panelist=panelist_name,
+                        score=responsiveness["score"],
+                        claims_addressed=responsiveness["claims_addressed"],
+                        claims_missed=responsiveness["claims_missed"]
+                    )
+                
+                # Calculate evidence strength (count evidence units)
+                evidence_count = sum(1 for arg in arguments if arg["unit_type"] == "evidence")
+                quality_metrics["evidence_strength"][panelist_name] = min(1.0, evidence_count * 0.2)
+            
+            # Update debate history with quality data
+            if "debate_history" in self.state and self.state["debate_history"]:
+                latest_round = self.state["debate_history"][-1]
+                latest_round["stances"] = round_stances
+                latest_round["argument_graph"] = round_arguments
+                latest_round["quality_metrics"] = quality_metrics
+                
+                logger.info(f"Round {round_number} quality evaluation complete: "
+                          f"{len(round_stances)} stances, {len(round_arguments)} arguments, "
+                          f"{len(quality_metrics['concessions_detected'])} concessions")
+        
+        except Exception as e:
+            logger.error(f"Error evaluating round quality: {e}", exc_info=True)
+            # Don't fail the debate if evaluation fails
+    
+    async def _generate_responsiveness_feedback(self, round_number: int) -> str:
+        """Generate feedback for panelists who scored low on responsiveness.
+        
+        Identifies panelists who missed opponent arguments and prompts them
+        to address those points in the next round.
+        
+        Args:
+            round_number: Round to check for low responsiveness
+            
+        Returns:
+            Feedback string to inject into next round prompt, or empty string
+        """
+        try:
+            debate_history = self.state.get("debate_history", [])
+            if round_number >= len(debate_history):
+                return ""
+            
+            round_data = debate_history[round_number]
+            quality_metrics = round_data.get("quality_metrics", {})
+            responsiveness_scores = quality_metrics.get("responsiveness_scores", {})
+            
+            # Identify low-scoring panelists (score < 0.5)
+            low_scorers = {
+                name: score for name, score in responsiveness_scores.items()
+                if score < 0.5
+            }
+            
+            if not low_scorers:
+                return ""
+            
+            # Build feedback message
+            feedback_parts = []
+            for panelist, score in low_scorers.items():
+                claims_missed = quality_metrics.get("claims_missed", {}).get(panelist, 0)
+                if claims_missed > 0:
+                    feedback_parts.append(
+                        f"@{panelist}: You missed {claims_missed} opponent argument(s) in the previous round. "
+                        f"Please address those points directly or explain why you're not engaging with them."
+                    )
+            
+            if feedback_parts:
+                return "\n".join(["RESPONSIVENESS FEEDBACK:"] + feedback_parts)
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Error generating responsiveness feedback: {e}")
+            return ""
+    
+    async def _generate_responsiveness_feedback(self, round_number: int) -> str:
+        """Generate feedback for panelists who scored low on responsiveness.
+        
+        Identifies panelists who missed opponent arguments and prompts them
+        to address those points in the next round.
+        
+        Args:
+            round_number: Round to check for low responsiveness
+            
+        Returns:
+            Feedback string to inject into next round prompt, or empty string
+        """
+        try:
+            debate_history = self.state.get("debate_history", [])
+            if round_number >= len(debate_history):
+                return ""
+            
+            round_data = debate_history[round_number]
+            quality_metrics = round_data.get("quality_metrics", {})
+            responsiveness_scores = quality_metrics.get("responsiveness_scores", {})
+            
+            # Identify low-scoring panelists (score < 0.5)
+            low_scorers = {
+                name: score for name, score in responsiveness_scores.items()
+                if score < 0.5
+            }
+            
+            if not low_scorers:
+                return ""
+            
+            # Build feedback message
+            feedback_parts = []
+            for panelist, score in low_scorers.items():
+                claims_missed = quality_metrics.get("claims_missed", {}).get(panelist, 0)
+                if claims_missed > 0:
+                    feedback_parts.append(
+                        f"@{panelist}: You missed {claims_missed} opponent argument(s) in the previous round. "
+                        f"Please address those points directly or explain why you're not engaging with them."
+                    )
+            
+            if feedback_parts:
+                return "\n".join(["RESPONSIVENESS FEEDBACK:"] + feedback_parts)
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Error generating responsiveness feedback: {e}")
+            return ""
 
     def _has_valid_responses(self, responses: Dict[str, str]) -> bool:
         """Check if responses dict contains actual panelist responses (not errors).
@@ -321,12 +613,17 @@ class DebateOrchestrator:
         return False
 
     async def _check_consensus(self, responses: Dict[str, str]) -> bool:
-        """Simplified consensus checking.
+        """Evidence-weighted consensus checking.
 
         Logic:
         - User-debate mode: never auto-consensus (user drives)
         - Single panelist: auto-consensus
-        - Multiple panelists: use moderator to evaluate
+        - Multiple panelists: evaluate stance alignment + evidence backing
+        
+        Consensus requires:
+        1. Stances align (same position)
+        2. Core claims compatible
+        3. Evidence-backed positions agree (not just rhetoric)
 
         Args:
             responses: Dict of panelist_name -> response_text
@@ -346,12 +643,52 @@ class DebateOrchestrator:
         if len(responses) <= 1:
             return True
 
-        # Multiple panelists: use moderator to evaluate
+        # Multiple panelists: evaluate with stance + evidence awareness
         try:
+            thread_id = self.state["thread_id"]
+            round_number = self.state.get("debate_round", 0)
+            
+            # If we have stance data from quality evaluation, use it
+            if self.evaluators_enabled and self.storage and round_number >= 0:
+                # Get latest round data with stances
+                debate_history = self.state.get("debate_history", [])
+                if debate_history:
+                    latest_round = debate_history[-1]
+                    stances = latest_round.get("stances", {})
+                    quality_metrics = latest_round.get("quality_metrics", {})
+                    
+                    if stances and len(stances) > 1:
+                        # Check stance alignment
+                        stance_values = [s["stance"] for s in stances.values()]
+                        all_same_stance = len(set(stance_values)) == 1
+                        
+                        # Check confidence levels (all must be > 0.6 for consensus)
+                        confidences = [s["confidence"] for s in stances.values()]
+                        high_confidence = all(c >= 0.6 for c in confidences)
+                        
+                        # Check evidence strength (at least some evidence)
+                        evidence_scores = quality_metrics.get("evidence_strength", {})
+                        has_evidence = any(score > 0.3 for score in evidence_scores.values())
+                        
+                        # Consensus if stances align AND high confidence AND evidence-backed
+                        if all_same_stance and high_confidence and has_evidence:
+                            logger.info(f"Evidence-weighted consensus: stance={stance_values[0]}, "
+                                      f"avg_confidence={sum(confidences)/len(confidences):.2f}")
+                            return True
+                        
+                        # No consensus if stances differ or low confidence
+                        if not all_same_stance:
+                            logger.info(f"No consensus: stances differ {set(stance_values)}")
+                            return False
+                        
+                        # Proceed to LLM evaluation if stances align but other criteria unclear
+            
+            # Fallback to LLM-based consensus check
             # Format responses for prompt
             responses_text = "\n".join(
                 f"- {name}: {resp[:200]}..."
                 for name, resp in responses.items()
+                if resp and not resp.startswith("(")
             )
 
             prompt = CONSENSUS_PROMPT.format(responses=responses_text)
@@ -362,7 +699,14 @@ class DebateOrchestrator:
                 sender=None,
             )
 
-            return "CONSENSUS: YES" in (result or "")
+            has_consensus = "CONSENSUS: YES" in (result or "")
+            
+            if has_consensus:
+                logger.info("LLM-evaluated consensus reached")
+            else:
+                logger.info("LLM-evaluated: no consensus")
+            
+            return has_consensus
 
         except Exception as e:
             logger.error(f"Error checking consensus: {e}")

@@ -125,8 +125,8 @@ class AG2DebateService:
             "debate_history": [],
         }
 
-        # Create orchestrator with event queue
-        orchestrator = DebateOrchestrator(state, event_queue)
+        # Create orchestrator with event queue and storage
+        orchestrator = DebateOrchestrator(state, event_queue, storage=self.storage)
 
         # Run debate loop in background task
         async def debate_loop():
@@ -234,8 +234,8 @@ class AG2DebateService:
 
             logger.info(f"Resuming debate for thread {thread_id}")
 
-            # Create orchestrator
-            orchestrator = DebateOrchestrator(state, event_queue)
+            # Create orchestrator with storage
+            orchestrator = DebateOrchestrator(state, event_queue, storage=self.storage)
 
             # Run debate loop in background
             async def resume_loop():

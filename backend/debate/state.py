@@ -7,16 +7,51 @@ AG2 handles message history internally, so we only store debate-specific state.
 from typing import TypedDict, Literal, Optional, Dict, List, Any
 
 
-class DebateRound(TypedDict):
-    """Single debate round result - FROZEN structure for API compatibility.
+class StanceData(TypedDict, total=False):
+    """Structured stance information extracted from panelist response."""
+    panelist_name: str
+    stance: str  # 'FOR', 'AGAINST', 'CONDITIONAL', 'NEUTRAL'
+    core_claim: str
+    confidence: float  # 0.0-1.0
+    changed_from_previous: bool
+    change_explanation: Optional[str]
 
-    This structure is emitted in 'debate_round' SSE events and included in
-    final results. Field names and types must never change.
+
+class ArgumentUnit(TypedDict, total=False):
+    """Single argument unit (claim, evidence, challenge, concession)."""
+    id: int
+    panelist_name: str
+    unit_type: str  # 'claim', 'evidence', 'challenge', 'concession'
+    content: str
+    target_claim_id: Optional[int]  # For challenges/concessions
+    confidence: Optional[float]
+
+
+class QualityMetrics(TypedDict, total=False):
+    """Quality metrics for a debate round."""
+    responsiveness_scores: Dict[str, float]  # panelist_name -> score
+    claims_addressed: Dict[str, int]  # panelist_name -> count
+    claims_missed: Dict[str, int]  # panelist_name -> count
+    tags_used: Dict[str, int]  # panelist_name -> count
+    concessions_detected: List[int]  # argument unit IDs
+    evidence_strength: Dict[str, float]  # panelist_name -> score
+
+
+class DebateRound(TypedDict, total=False):
+    """Single debate round result.
+
+    Extended with structured quality data while maintaining API compatibility.
+    New fields are optional (total=False) so old consumers still work.
     """
     round_number: int
     panel_responses: Dict[str, str]  # panelist_name -> response_text
     consensus_reached: bool
     user_message: Optional[str]
+    
+    # Quality tracking fields (new)
+    stances: Optional[Dict[str, StanceData]]  # panelist_name -> stance
+    argument_graph: Optional[List[ArgumentUnit]]  # All argument units this round
+    quality_metrics: Optional[QualityMetrics]  # Responsiveness, engagement metrics
 
 
 class DebateState(TypedDict, total=False):
