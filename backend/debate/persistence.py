@@ -169,7 +169,48 @@ class PostgresDebateStorage:
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_responsiveness_panelist ON responsiveness_scores(thread_id, panelist_name);
             """)
-            
+
+            # Debate scores table (Phase 3: Human-in-the-loop scoring)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS debate_scores (
+                    id SERIAL PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
+                    round_number INT NOT NULL,
+                    panelist_name TEXT NOT NULL,
+
+                    -- Point breakdown
+                    responsiveness_points INT DEFAULT 0,
+                    evidence_points INT DEFAULT 0,
+                    novelty_points INT DEFAULT 0,
+                    concession_won_points INT DEFAULT 0,
+                    stance_consistency_points INT DEFAULT 0,
+                    user_compelling_points INT DEFAULT 0,
+
+                    -- Penalties
+                    ignored_claim_penalty INT DEFAULT 0,
+                    stance_drift_penalty INT DEFAULT 0,
+                    hedging_penalty INT DEFAULT 0,
+                    fallacy_penalty INT DEFAULT 0,
+                    user_weak_penalty INT DEFAULT 0,
+
+                    -- Totals
+                    round_total INT DEFAULT 0,
+                    cumulative_total INT DEFAULT 0,
+
+                    -- Score events as JSON
+                    events JSONB,
+
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(thread_id, round_number, panelist_name)
+                );
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_debate_scores_thread ON debate_scores(thread_id);
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_debate_scores_panelist ON debate_scores(thread_id, panelist_name);
+            """)
+
             logger.debug("Ensured debate_state and quality tracking tables exist")
 
     async def save(self, thread_id: str, state: DebateState) -> None:
@@ -355,11 +396,11 @@ class PostgresDebateStorage:
     
     async def get_round_arguments(self, thread_id: str, round_number: int) -> List[Dict[str, Any]]:
         """Get all argument units from a specific round.
-        
+
         Args:
             thread_id: Thread identifier
             round_number: Round number
-            
+
         Returns:
             List of argument unit dictionaries
         """
@@ -371,8 +412,143 @@ class PostgresDebateStorage:
                 WHERE thread_id = $1 AND round_number = $2
                 ORDER BY id
             """, thread_id, round_number)
-            
+
             return [dict(row) for row in rows]
+
+    async def save_round_scores(self, thread_id: str, round_number: int,
+                                scores: Dict[str, Any]) -> None:
+        """Save debate scores for all panelists in a round.
+
+        Args:
+            thread_id: Thread identifier
+            round_number: Debate round number
+            scores: Dict mapping panelist_name to RoundScore data
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            for panelist_name, score_data in scores.items():
+                # Extract point breakdowns from events
+                points = {
+                    'responsiveness': 0, 'evidence': 0, 'novelty': 0,
+                    'stance_consistency': 0, 'user_approval': 0,
+                    'ignored_claim': 0, 'stance_drift': 0, 'hedging': 0, 'user_disapproval': 0
+                }
+
+                events = score_data.get('events', [])
+                for event in events:
+                    category = event.get('category', '')
+                    event_points = event.get('points', 0)
+                    if category in points:
+                        points[category] += event_points
+
+                await conn.execute("""
+                    INSERT INTO debate_scores
+                    (thread_id, round_number, panelist_name,
+                     responsiveness_points, evidence_points, novelty_points,
+                     stance_consistency_points, user_compelling_points,
+                     ignored_claim_penalty, stance_drift_penalty, hedging_penalty,
+                     user_weak_penalty, round_total, cumulative_total, events)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    ON CONFLICT (thread_id, round_number, panelist_name) DO UPDATE
+                    SET responsiveness_points = $4, evidence_points = $5, novelty_points = $6,
+                        stance_consistency_points = $7, user_compelling_points = $8,
+                        ignored_claim_penalty = $9, stance_drift_penalty = $10, hedging_penalty = $11,
+                        user_weak_penalty = $12, round_total = $13, cumulative_total = $14, events = $15
+                """, thread_id, round_number, panelist_name,
+                    points['responsiveness'], points['evidence'], points['novelty'],
+                    points['stance_consistency'], points['user_approval'],
+                    abs(points['ignored_claim']), abs(points['stance_drift']), abs(points['hedging']),
+                    abs(points['user_disapproval']),
+                    score_data.get('round_total', 0),
+                    score_data.get('cumulative_total', 0),
+                    json.dumps([{'category': e['category'], 'points': e['points'], 'reason': e['reason']}
+                               for e in events]))
+
+        logger.debug(f"Saved round {round_number} scores for {len(scores)} panelists")
+
+    async def save_user_vote(self, thread_id: str, round_number: int,
+                            panelist_name: str, vote_type: str,
+                            points: int) -> None:
+        """Record a user vote on a panelist's response.
+
+        Args:
+            thread_id: Thread identifier
+            round_number: Debate round number
+            panelist_name: Name of panelist being voted on
+            vote_type: Either "compelling" or "weak"
+            points: Points to add (positive for compelling, negative for weak)
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            if vote_type == "compelling":
+                await conn.execute("""
+                    UPDATE debate_scores
+                    SET user_compelling_points = user_compelling_points + $4,
+                        round_total = round_total + $4,
+                        cumulative_total = cumulative_total + $4
+                    WHERE thread_id = $1 AND round_number = $2 AND panelist_name = $3
+                """, thread_id, round_number, panelist_name, points)
+            else:
+                await conn.execute("""
+                    UPDATE debate_scores
+                    SET user_weak_penalty = user_weak_penalty + $4,
+                        round_total = round_total - $4,
+                        cumulative_total = cumulative_total - $4
+                    WHERE thread_id = $1 AND round_number = $2 AND panelist_name = $3
+                """, thread_id, round_number, panelist_name, abs(points))
+
+        logger.debug(f"Recorded user vote ({vote_type}) for {panelist_name} round {round_number}")
+
+    async def get_cumulative_scores(self, thread_id: str) -> Dict[str, int]:
+        """Get cumulative scores for all panelists in a debate.
+
+        Args:
+            thread_id: Thread identifier
+
+        Returns:
+            Dict mapping panelist_name to cumulative score
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT panelist_name, MAX(cumulative_total) as total
+                FROM debate_scores
+                WHERE thread_id = $1
+                GROUP BY panelist_name
+                ORDER BY total DESC
+            """, thread_id)
+
+            return {row['panelist_name']: row['total'] for row in rows}
+
+    async def get_round_scores(self, thread_id: str, round_number: int) -> Dict[str, Any]:
+        """Get scores for a specific round.
+
+        Args:
+            thread_id: Thread identifier
+            round_number: Round number
+
+        Returns:
+            Dict mapping panelist_name to score data
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT panelist_name, round_total, cumulative_total, events
+                FROM debate_scores
+                WHERE thread_id = $1 AND round_number = $2
+            """, thread_id, round_number)
+
+            result = {}
+            for row in rows:
+                events = row['events']
+                if isinstance(events, str):
+                    events = json.loads(events)
+                result[row['panelist_name']] = {
+                    'round_total': row['round_total'],
+                    'cumulative_total': row['cumulative_total'],
+                    'events': events or []
+                }
+            return result
 
 
 class InMemoryDebateStorage:
@@ -476,3 +652,63 @@ class InMemoryDebateStorage:
         """Get arguments from memory."""
         return [u for u in self.argument_units
                 if u['thread_id'] == thread_id and u['round_number'] == round_number]
+
+    async def save_round_scores(self, thread_id: str, round_number: int,
+                                scores: Dict[str, Any]) -> None:
+        """Save round scores in memory."""
+        for panelist_name, score_data in scores.items():
+            # Remove existing score for this round/panelist
+            self.scores = [s for s in getattr(self, 'scores', [])
+                          if not (s['thread_id'] == thread_id and
+                                 s['round_number'] == round_number and
+                                 s['panelist_name'] == panelist_name)]
+            if not hasattr(self, 'scores'):
+                self.scores = []
+            self.scores.append({
+                'thread_id': thread_id,
+                'round_number': round_number,
+                'panelist_name': panelist_name,
+                'round_total': score_data.get('round_total', 0),
+                'cumulative_total': score_data.get('cumulative_total', 0),
+                'events': score_data.get('events', [])
+            })
+
+    async def save_user_vote(self, thread_id: str, round_number: int,
+                            panelist_name: str, vote_type: str,
+                            points: int) -> None:
+        """Record user vote in memory."""
+        if not hasattr(self, 'scores'):
+            self.scores = []
+        for score in self.scores:
+            if (score['thread_id'] == thread_id and
+                score['round_number'] == round_number and
+                score['panelist_name'] == panelist_name):
+                score['round_total'] += points
+                score['cumulative_total'] += points
+                break
+
+    async def get_cumulative_scores(self, thread_id: str) -> Dict[str, int]:
+        """Get cumulative scores from memory."""
+        if not hasattr(self, 'scores'):
+            return {}
+        result = {}
+        for score in self.scores:
+            if score['thread_id'] == thread_id:
+                name = score['panelist_name']
+                if name not in result or score['cumulative_total'] > result[name]:
+                    result[name] = score['cumulative_total']
+        return result
+
+    async def get_round_scores(self, thread_id: str, round_number: int) -> Dict[str, Any]:
+        """Get round scores from memory."""
+        if not hasattr(self, 'scores'):
+            return {}
+        result = {}
+        for score in self.scores:
+            if score['thread_id'] == thread_id and score['round_number'] == round_number:
+                result[score['panelist_name']] = {
+                    'round_total': score['round_total'],
+                    'cumulative_total': score['cumulative_total'],
+                    'events': score['events']
+                }
+        return result

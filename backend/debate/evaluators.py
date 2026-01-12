@@ -57,18 +57,32 @@ Respond in JSON format:
             "response_format": {"type": "json_object"}
         }
     
-    async def extract_stance(self, panelist_name: str, response: str, 
-                           previous_stance: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def extract_stance(self, panelist_name: str, response: str,
+                           previous_stance: Optional[Dict[str, Any]] = None,
+                           assigned_role: Optional[str] = None) -> Dict[str, Any]:
         """Extract stance from panelist response.
-        
+
         Args:
             panelist_name: Name of panelist
             response: Their response text
             previous_stance: Previous stance data for drift detection
-            
+            assigned_role: If "DEVIL_ADVOCATE", force NEUTRAL stance
+
         Returns:
             Dict with stance, core_claim, confidence, changed_from_previous, change_explanation
         """
+        # Devil's Advocate MUST always be NEUTRAL - don't even extract, force it
+        if assigned_role == "DEVIL_ADVOCATE":
+            logger.info(f"{panelist_name} is Devil's Advocate - forcing NEUTRAL stance")
+            return {
+                "panelist_name": panelist_name,
+                "stance": "NEUTRAL",
+                "core_claim": "As Devil's Advocate, I critique both sides without taking a position",
+                "confidence": 1.0,  # High confidence in NEUTRAL role
+                "changed_from_previous": False,
+                "change_explanation": None
+            }
+
         try:
             # Create one-shot assistant for extraction
             if ag2 is None:

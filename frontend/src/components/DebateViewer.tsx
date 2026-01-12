@@ -1,8 +1,27 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Markdown } from "./Markdown";
 import type { DebateRound, PanelistConfigPayload } from "../types";
 import { PROVIDER_LABELS } from "../lib/modelProviders";
+import { DebateScoreboard } from "./DebateScoreboard";
+import { StanceIndicator } from "./StanceIndicator";
+
+interface ScoreData {
+  cumulative: number;
+  roundDelta?: number;
+  events?: Array<{
+    category: string;
+    points: number;
+    reason: string;
+  }>;
+}
+
+interface StanceData {
+  stance: string;
+  confidence: number;
+  changed_from_previous?: boolean;
+  core_claim?: string;
+}
 
 interface DebateViewerProps {
   debateHistory: DebateRound[];
@@ -13,9 +32,22 @@ interface DebateViewerProps {
   onContinue?: () => void;
   tagged_panelists?: string[];
   user_as_participant?: boolean;
+  scores?: Record<string, ScoreData>;
+  onVote?: (panelistName: string, roundNumber: number, voteType: "compelling" | "weak") => void;
 }
 
-export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = false, debatePaused = false, onContinue, tagged_panelists = [], user_as_participant = false }: DebateViewerProps) {
+export function DebateViewer({
+  debateHistory,
+  panelists,
+  onCopy,
+  stepReview = false,
+  debatePaused = false,
+  onContinue,
+  tagged_panelists = [],
+  user_as_participant = false,
+  scores,
+  onVote,
+}: DebateViewerProps) {
   const [expandedRounds, setExpandedRounds] = useState<Set<number>>(() => {
     // Auto-expand the first round initially
     if (debateHistory.length > 0) {
@@ -23,6 +55,48 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
     }
     return new Set();
   });
+
+  // Extract latest stances from debate history
+  const latestStances = useMemo<Record<string, StanceData>>(() => {
+    if (debateHistory.length === 0) return {};
+    const latestRound = debateHistory[debateHistory.length - 1];
+    if (!latestRound.stances) return {};
+
+    const result: Record<string, StanceData> = {};
+    for (const [name, stance] of Object.entries(latestRound.stances)) {
+      if (stance && typeof stance === "object") {
+        result[name] = {
+          stance: (stance as any).stance || "NEUTRAL",
+          confidence: (stance as any).confidence || 0.5,
+          changed_from_previous: (stance as any).changed_from_previous || false,
+          core_claim: (stance as any).core_claim,
+        };
+      }
+    }
+    return result;
+  }, [debateHistory]);
+
+  // Calculate scores from debate history if not provided
+  const computedScores = useMemo<Record<string, ScoreData>>(() => {
+    if (scores && Object.keys(scores).length > 0) return scores;
+    if (debateHistory.length === 0) return {};
+
+    const result: Record<string, ScoreData> = {};
+    const latestRound = debateHistory[debateHistory.length - 1];
+
+    if (latestRound.scores) {
+      for (const [name, scoreData] of Object.entries(latestRound.scores)) {
+        if (scoreData && typeof scoreData === "object") {
+          result[name] = {
+            cumulative: (scoreData as any).cumulative_total || 0,
+            roundDelta: (scoreData as any).round_total || 0,
+            events: (scoreData as any).events || [],
+          };
+        }
+      }
+    }
+    return result;
+  }, [debateHistory, scores]);
 
   // When new rounds arrive, auto-expand the latest one
   useEffect(() => {
@@ -53,10 +127,19 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
   const roundsToShow = debateHistory;
 
   // Show continue button only when debate is actively paused (waiting for user)
-  const showContinueButton = debatePaused && onContinue;
+  // BUT not in stepReview mode - App.tsx has its own user input area at the bottom
+  const showContinueButton = debatePaused && onContinue && !stepReview;
 
   return (
     <div className="mt-6 space-y-3">
+      {/* Scoreboard and Stance Indicator */}
+      {Object.keys(computedScores).length > 0 && (
+        <DebateScoreboard scores={computedScores} showDetails={stepReview} />
+      )}
+      {Object.keys(latestStances).length > 0 && (
+        <StanceIndicator stances={latestStances} showClaims={stepReview} />
+      )}
+
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">

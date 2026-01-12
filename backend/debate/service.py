@@ -108,14 +108,29 @@ class AG2DebateService:
         usage_tracker = UsageAccumulator()
 
         # Initialize debate state
+        # debate_mode: "autonomous" | "supervised" | "participatory"
+        # - autonomous: runs without pauses until consensus or max_rounds
+        # - supervised: pauses each round for user to review/vote
+        # - participatory: pauses each round for user input
+        debate_mode = config.get("debate_mode", "autonomous")
+
+        # For ALL debate modes, default to adversarial stance assignment
+        # to ensure diverse positions and better debate quality
+        # This mirrors real debate teams where sides are assigned regardless of preference
+        stance_mode = config.get("stance_mode")
+        if stance_mode is None:
+            if debate_mode is not None:
+                stance_mode = "adversarial"  # Force diverse stances in all debate modes
+            else:
+                stance_mode = "free"  # Panel-only mode (no debate) uses free stances
+
         state: DebateState = {
             "thread_id": thread_id,
             "phase": "init",
             "debate_round": 0,
             "max_rounds": config.get("max_debate_rounds", 3),
             "consensus_reached": False,
-            "debate_mode": config.get("debate_mode", False),
-            "user_as_participant": config.get("user_as_participant", False),
+            "debate_mode": debate_mode,
             "tagged_panelists": config.get("tagged_panelists", []),
             "panelists": panelists,
             "provider_keys": provider_keys or {},
@@ -123,6 +138,9 @@ class AG2DebateService:
             "summary": None,
             "panel_responses": {},
             "debate_history": [],
+            # Adversarial role assignment
+            "stance_mode": stance_mode,
+            "assigned_roles": config.get("assigned_roles"),
         }
 
         # Create orchestrator with event queue and storage
@@ -139,9 +157,17 @@ class AG2DebateService:
                     # Save state after each step
                     await self.storage.save(thread_id, state)
 
-                    # If paused, break and wait for resume
+                    # If paused, emit debate_paused event and break
                     if state["phase"] == "paused":
-                        logger.debug(f"Debate paused for thread {thread_id}")
+                        logger.info(f"Debate paused for thread {thread_id}, emitting debate_paused event")
+                        paused_event = {
+                            "type": "debate_paused",
+                            "thread_id": thread_id,
+                            "panel_responses": state.get("panel_responses", {}),
+                            "debate_history": state.get("debate_history", []),
+                            "usage": usage_tracker.summarize(),
+                        }
+                        await event_queue.put(paused_event)
                         break
 
                 # Emit result event when finished
@@ -237,6 +263,10 @@ class AG2DebateService:
             # Create orchestrator with storage
             orchestrator = DebateOrchestrator(state, event_queue, storage=self.storage)
 
+            # Initialize agents and groupchat for resumed debate
+            # (This is needed because the new orchestrator has empty agents/groupchat)
+            await orchestrator.initialize()
+
             # Run debate loop in background
             async def resume_loop():
                 try:
@@ -245,7 +275,17 @@ class AG2DebateService:
                         await orchestrator.step()
                         await self.storage.save(thread_id, state)
 
+                        # If paused again, emit debate_paused event and break
                         if state["phase"] == "paused":
+                            logger.info(f"Debate paused again for thread {thread_id}, emitting debate_paused event")
+                            paused_event = {
+                                "type": "debate_paused",
+                                "thread_id": thread_id,
+                                "panel_responses": state.get("panel_responses", {}),
+                                "debate_history": state.get("debate_history", []),
+                                "usage": usage_tracker.summarize(),
+                            }
+                            await event_queue.put(paused_event)
                             break
 
                     # Emit result when finished

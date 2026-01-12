@@ -75,6 +75,18 @@ export async function askPanelStream(body, callbacks, signal) {
                         else if (event.type === "debate_round" && callbacks.onDebateRound) {
                             callbacks.onDebateRound(event.round);
                         }
+                        else if (event.type === "stance_extracted" && callbacks.onStanceExtracted) {
+                            callbacks.onStanceExtracted(event.panelist, {
+                                panelist_name: event.panelist,
+                                stance: event.stance,
+                                confidence: event.confidence,
+                                changed_from_previous: event.changed,
+                                core_claim: event.core_claim || "",
+                            });
+                        }
+                        else if (event.type === "roles_assigned" && callbacks.onRolesAssigned) {
+                            callbacks.onRolesAssigned(event.roles);
+                        }
                         else if (event.type === "debate_paused" && callbacks.onDebatePaused) {
                             callbacks.onDebatePaused({
                                 thread_id: event.thread_id,

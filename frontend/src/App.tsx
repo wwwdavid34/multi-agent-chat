@@ -15,6 +15,7 @@ import { GoogleLoginButton } from "./components/auth/GoogleLoginButton";
 import { UserMenu } from "./components/auth/UserMenu";
 import type {
   AskResponse,
+  DebateMode,
   DebateRound,
   LLMProvider,
   PanelistConfigPayload,
@@ -39,14 +40,13 @@ interface MessageEntry {
   panelists: PanelistConfigPayload[]; // Store panelist configs to show model info
   expanded: boolean;
   debate_history?: DebateRound[]; // Debate rounds if debate mode was used
-  debate_mode?: boolean; // Whether this exchange used debate mode
+  // Debate mode: "autonomous" | "supervised" | "participatory" | undefined
+  debate_mode?: DebateMode;
   max_debate_rounds?: number; // Max rounds configured for this exchange
-  step_review?: boolean; // Whether to show rounds step-by-step
   debate_paused?: boolean; // Whether debate is paused waiting for user to continue
   stopped?: boolean; // Whether generation was stopped by user
   usage?: TokenUsage; // Token usage statistics for this exchange
-  user_as_participant?: boolean; // Whether user is participating in debate
-  tagged_panelists?: string[]; // Panelist names user tagged in this exchange
+  tagged_panelists?: string[]; // @mentioned panelist names
 }
 
 const parseJSON = <T,>(value: string | null, fallback: T): T => {
@@ -68,9 +68,9 @@ const MODERATOR_PANELIST: PanelistConfigPayload = {
   provider: "openai",
   model: "gpt-4o-mini",
 };
-const DEFAULT_DEBATE_MODE = false;
+// Debate mode: undefined = no debate, "autonomous" | "supervised" | "participatory"
+const DEFAULT_DEBATE_MODE: DebateMode | undefined = undefined;
 const DEFAULT_MAX_DEBATE_ROUNDS = 3;
-const DEFAULT_STEP_REVIEW = false;
 
 const createPanelist = (existingPanelists: PanelistConfigPayload[]): PanelistConfigPayload => ({
   id: `panelist-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
@@ -309,11 +309,11 @@ const MessageBubble = memo(function MessageBubble({
                   debateHistory={entry.debate_history}
                   panelists={entry.panelists}
                   onCopy={onCopy}
-                  stepReview={entry.step_review}
+                  stepReview={entry.debate_mode === "supervised" || entry.debate_mode === "participatory"}
                   debatePaused={entry.debate_paused}
                   onContinue={onContinueDebate}
                   tagged_panelists={entry.tagged_panelists}
-                  user_as_participant={entry.user_as_participant}
+                  user_as_participant={entry.debate_mode === "participatory"}
                 />
               ) : !entry.stopped ? (
                 <>
@@ -692,9 +692,12 @@ export default function App() {
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [statusByEntryId, setStatusByEntryId] = useState<Record<string, string>>({});
   const [statusTrailByEntryId, setStatusTrailByEntryId] = useState<Record<string, string[]>>({});
+  const [liveStances, setLiveStances] = useState<Record<string, { stance: string; confidence: number; changed?: boolean }>>({});
+  const [assignedRoles, setAssignedRoles] = useState<Record<string, string>>({});
   const [searchSources, setSearchSources] = useState<Array<{ url: string; title: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [debateUserInput, setDebateUserInput] = useState<string>(""); // User input for debate participation
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [storageInfo, setStorageInfo] = useState<{
     mode: string;
@@ -1058,13 +1061,11 @@ export default function App() {
       attachments,
       customDebateMode,
       customMaxRounds,
-      customStepReview,
     }: {
       question: string;
       attachments: string[];
-      customDebateMode?: boolean;
+      customDebateMode?: DebateMode;
       customMaxRounds?: number;
-      customStepReview?: boolean;
     }) => {
       const hasContent = Boolean(question.trim()) || attachments.length > 0;
       if (!hasContent || loading) {
@@ -1074,6 +1075,8 @@ export default function App() {
       setLoading(true);
       setError(null);
       setSearchSources([]); // Clear previous search sources
+      setLiveStances({}); // Clear live stance tracking
+      setAssignedRoles({}); // Clear assigned roles
 
       // Create abort controller for this request
       const controller = new AbortController();
@@ -1084,17 +1087,18 @@ export default function App() {
       setActiveEntryId(entryId);
       setEntryStatus(entryId, "Starting...");
 
-      const useDebateMode = customDebateMode ?? DEFAULT_DEBATE_MODE;
       const useMaxRounds = customMaxRounds ?? DEFAULT_MAX_DEBATE_ROUNDS;
-      const useStepReview = customStepReview ?? DEFAULT_STEP_REVIEW;
 
-      // Parse @ mentions to detect user-debate mode
+      // Parse @ mentions to detect participatory mode
       const taggedPanelists = parseTaggedPanelists(sanitizedQuestion);
-      const userAsParticipant = taggedPanelists.length > 0;
+      const hasTaggedPanelists = taggedPanelists.length > 0;
 
-      // If user tags panelists, activate debate mode with step review
-      const effectiveDebateMode = userAsParticipant ? true : useDebateMode;
-      const effectiveStepReview = userAsParticipant ? true : useStepReview;
+      // Determine effective debate mode:
+      // - If user tags panelists -> "participatory" (user actively participates)
+      // - Otherwise use the configured mode (or undefined for no debate)
+      const effectiveDebateMode: DebateMode | undefined = hasTaggedPanelists
+        ? "participatory"
+        : customDebateMode ?? DEFAULT_DEBATE_MODE;
 
       // Immediately add user message with loading state for assistant response
       const optimisticEntry: MessageEntry = {
@@ -1105,11 +1109,9 @@ export default function App() {
         panel_responses: {},
         panelists: panelists, // Store panelist configs to show model info later
         expanded: false,
-        debate_mode: useDebateMode,
+        debate_mode: effectiveDebateMode,
         max_debate_rounds: useMaxRounds,
-        step_review: useStepReview,
         debate_history: [],
-        user_as_participant: userAsParticipant,
         tagged_panelists: taggedPanelists,
       };
 
@@ -1128,10 +1130,9 @@ export default function App() {
             provider_keys: sanitizedProviderKeys,
             debate_mode: effectiveDebateMode,
             max_debate_rounds: useMaxRounds,
-            step_review: effectiveStepReview,
-            user_as_participant: userAsParticipant,
             tagged_panelists: taggedPanelists,
-            user_message: userAsParticipant ? sanitizedQuestion : undefined,
+            // In participatory mode, include the user's message
+            user_message: effectiveDebateMode === "participatory" ? sanitizedQuestion : undefined,
           },
           {
             onStatus: (message) => {
@@ -1170,10 +1171,12 @@ export default function App() {
                     : entry
                 ) ?? [],
               }));
-              // Clear loading state when debate pauses
+              // Clear loading state when debate pauses, but keep activeEntryId
+              // so the user input area at the bottom shows correctly
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
-              setActiveEntryId(null);
+              // DON'T clear activeEntryId - the entry is still active, waiting for user input
+              // setActiveEntryId(null);
             },
             onSearchSource: (source) => {
               setSearchSources((prev) => [...prev, source]);
@@ -1194,6 +1197,21 @@ export default function App() {
                     : entry
                 ) ?? [],
               }));
+            },
+            onStanceExtracted: (panelist, stance) => {
+              // Update live stance indicator during debate
+              setLiveStances((prev) => ({
+                ...prev,
+                [panelist]: {
+                  stance: stance.stance,
+                  confidence: stance.confidence,
+                  changed: stance.changed_from_previous,
+                },
+              }));
+            },
+            onRolesAssigned: (roles) => {
+              // Show assigned debate roles (PRO/CON/DEVIL'S ADVOCATE)
+              setAssignedRoles(roles);
             },
             onResult: (result) => {
               clearEntryStatus(entryId);
@@ -1289,14 +1307,16 @@ export default function App() {
         setLoading(false);
         setLoadingStatus("Panel is thinking..."); // Reset status
         setAbortController(null); // Clean up abort controller
-        setActiveEntryId(null);
+        // DON'T clear activeEntryId here - it's cleared in onResult/onError callbacks
+        // If debate paused, we need activeEntryId to show the user input area
+        // setActiveEntryId(null);
       }
     },
     [clearEntryStatus, loading, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
   );
 
   const handleContinueDebate = useCallback(
-    async (entryId: string) => {
+    async (entryId: string, userMessage?: string) => {
       const entry = conversations[threadId]?.find((e) => e.id === entryId);
       if (!entry || !entry.debate_paused) {
         return;
@@ -1305,7 +1325,7 @@ export default function App() {
       setLoading(true);
       setError(null);
       setActiveEntryId(entryId);
-      setEntryStatus(entryId, "Continuing debate...");
+      setEntryStatus(entryId, userMessage ? "Sending your input..." : "Continuing debate...");
 
       // Create abort controller for this request
       const controller = new AbortController();
@@ -1320,6 +1340,7 @@ export default function App() {
             panelists: preparedPanelists,
             provider_keys: sanitizedProviderKeys,
             continue_debate: true, // Signal this is a continuation
+            user_message: userMessage || undefined, // User's input for this round
           },
           {
             onStatus: (message) => {
@@ -1341,6 +1362,21 @@ export default function App() {
                 ) ?? [],
               }));
             },
+            onStanceExtracted: (panelist, stance) => {
+              // Update live stance indicator during debate
+              setLiveStances((prev) => ({
+                ...prev,
+                [panelist]: {
+                  stance: stance.stance,
+                  confidence: stance.confidence,
+                  changed: stance.changed_from_previous,
+                },
+              }));
+            },
+            onRolesAssigned: (roles) => {
+              // Show assigned debate roles (PRO/CON/DEVIL'S ADVOCATE)
+              setAssignedRoles(roles);
+            },
             onDebatePaused: (result) => {
               setEntryStatus(entryId, "Paused for review");
               // Still paused - waiting for next round
@@ -1357,10 +1393,12 @@ export default function App() {
                     : e
                 ) ?? [],
               }));
-              // Clear loading state when debate pauses
+              // Clear loading state when debate pauses, but keep activeEntryId
+              // so the user input area at the bottom shows correctly
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
-              setActiveEntryId(null);
+              // DON'T clear activeEntryId - the entry is still active, waiting for user input
+              // setActiveEntryId(null);
             },
             onResult: (result) => {
               clearEntryStatus(entryId);
@@ -1379,7 +1417,7 @@ export default function App() {
                     : e
                 ) ?? [],
               }));
-              // Clear loading state when response is complete
+              // Clear loading state and activeEntryId when debate is fully complete
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
               setActiveEntryId(null);
@@ -1410,7 +1448,9 @@ export default function App() {
         setLoading(false);
         setLoadingStatus("Panel is thinking...");
         setAbortController(null); // Clean up abort controller
-        setActiveEntryId(null);
+        // DON'T clear activeEntryId here - it's cleared in onResult/onError callbacks
+        // If debate pauses again, we need activeEntryId to show the user input area
+        // setActiveEntryId(null);
       }
     },
     [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
@@ -1441,10 +1481,9 @@ export default function App() {
             panelists: preparedPanelists,
             provider_keys: sanitizedProviderKeys,
             continue_debate: true,
-            exit_user_debate: true, // Signal user is exiting user-debate
+            exit_debate: true, // Signal user is exiting the debate
             debate_mode: entry.debate_mode,
             max_debate_rounds: entry.max_debate_rounds,
-            step_review: entry.step_review,
           },
           {
             onStatus: (message) => {
@@ -1922,7 +1961,7 @@ export default function App() {
     setRegenerateModalOpen(true);
   }, []);
 
-  const confirmRegenerate = useCallback(async (useDebateMode: boolean, rounds: number, useStepReview: boolean) => {
+  const confirmRegenerate = useCallback(async (debateMode: DebateMode | undefined, rounds: number) => {
     if (regenerateIndex === null) return;
 
     const entry = conversations[threadId]?.[regenerateIndex];
@@ -1938,9 +1977,8 @@ export default function App() {
     await handleSend({
       question: entry.question,
       attachments: entry.attachments,
-      customDebateMode: useDebateMode,
+      customDebateMode: debateMode,
       customMaxRounds: rounds,
-      customStepReview: useStepReview,
     });
 
     setRegenerateIndex(null);
@@ -2374,9 +2412,9 @@ export default function App() {
                     </div>
                     {activeEntry?.debate_mode && (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground whitespace-nowrap">
-                        {activeEntry.step_review && (
+                        {activeEntry.debate_mode !== "autonomous" && (
                           <span className="px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
-                            Step Review
+                            {activeEntry.debate_mode === "participatory" ? "Participatory" : "Supervised"}
                           </span>
                         )}
                         <span>
@@ -2385,11 +2423,98 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                  {/* Human-in-the-loop guidance for supervised/participatory modes */}
+                  {activeEntry?.debate_mode && activeEntry.debate_mode !== "autonomous" && (
+                    <div className="mt-2 text-xs text-muted-foreground bg-accent/5 border border-accent/20 rounded-lg px-3 py-2">
+                      <span className="font-medium text-accent">You can participate!</span> After this round completes, you'll be able to add your input, @mention panelists, or vote on arguments before continuing.
+                    </div>
+                  )}
+                  {/* Live Stance Indicator during debate */}
+                  {activeEntry?.debate_mode && Object.keys(liveStances).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {Object.entries(liveStances).map(([name, { stance, confidence, changed }]) => {
+                        const stanceColors: Record<string, string> = {
+                          FOR: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30",
+                          AGAINST: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30",
+                          CONDITIONAL: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
+                          NEUTRAL: "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30",
+                        };
+                        const roleLabel = assignedRoles[name] ? ` [${assignedRoles[name]}]` : "";
+                        return (
+                          <div
+                            key={name}
+                            className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs ${stanceColors[stance] || stanceColors.NEUTRAL}`}
+                          >
+                            <span className="font-medium">{name}{roleLabel}</span>
+                            <span className="opacity-75">{stance}</span>
+                            <span className="opacity-50">{Math.round(confidence * 100)}%</span>
+                            {changed && <span className="text-amber-500" title="Changed from previous">↻</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Exit User-Debate Button */}
-              {activeEntry?.debate_paused && activeEntry?.user_as_participant && (
+              {/* User Input for Paused Debate (Human-in-the-Loop) */}
+              {activeEntry?.debate_paused && activeEntry?.debate_mode && activeEntry.debate_mode !== "autonomous" && (
+                <div className="mb-3 rounded-xl border-2 border-accent/40 bg-accent/5 backdrop-blur-sm p-4 shadow-md">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="px-2.5 py-1 rounded-full bg-accent text-accent-foreground font-medium">
+                          Your Turn
+                        </span>
+                        <span className="text-muted-foreground">
+                          Round {(activeEntry.debate_history?.length ?? 0)}/{activeEntry.max_debate_rounds ?? 3} complete
+                        </span>
+                      </div>
+                      <span className="text-xs text-muted-foreground px-2 py-0.5 rounded bg-muted">
+                        {activeEntry.debate_mode === "participatory" ? "Participatory" : "Supervised"} Mode
+                      </span>
+                    </div>
+                    <textarea
+                      placeholder="Add your thoughts, ask questions, or @mention panelists to direct the debate..."
+                      value={debateUserInput}
+                      onChange={(e) => setDebateUserInput(e.target.value)}
+                      disabled={loading}
+                      autoFocus
+                      className="w-full min-h-[100px] px-4 py-3 rounded-lg border border-accent/30 bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs text-muted-foreground">
+                        <span className="font-medium">Tip:</span> Use @PanelistName to direct questions to specific panelists
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            handleContinueDebate(activeEntry.id);
+                            setDebateUserInput("");
+                          }}
+                          disabled={loading}
+                          className="px-4 py-2.5 rounded-lg bg-muted hover:bg-muted/80 text-foreground text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-border/50"
+                        >
+                          Skip & Continue
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleContinueDebate(activeEntry.id, debateUserInput);
+                            setDebateUserInput("");
+                          }}
+                          disabled={loading || !debateUserInput.trim()}
+                          className="px-5 py-2.5 rounded-lg bg-accent hover:bg-accent/90 text-accent-foreground text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                        >
+                          Send & Continue
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Exit Participatory Debate Button */}
+              {activeEntry?.debate_paused && activeEntry?.debate_mode === "participatory" && (
                 <div className="flex gap-2 px-4 pb-4">
                   <button
                     onClick={() => handleExitUserDebate(activeEntry.id)}
@@ -2401,15 +2526,30 @@ export default function App() {
                 </div>
               )}
 
-              <ChatComposer
-                loading={loading}
-                error={error}
-                isNewChat={messages.length === 0}
-                onSend={handleSend}
-                onStop={stopGeneration}
-                onClearError={() => setError(null)}
-                onError={(message) => setError(message)}
-              />
+              {/* Hide main composer when supervised/participatory debate is active */}
+              {!(activeEntry?.debate_mode && activeEntry.debate_mode !== "autonomous" && (loading || activeEntry.debate_paused)) && (
+                <ChatComposer
+                  loading={loading}
+                  error={error}
+                  isNewChat={messages.length === 0}
+                  onSend={handleSend}
+                  onStop={stopGeneration}
+                  onClearError={() => setError(null)}
+                  onError={(message) => setError(message)}
+                />
+              )}
+
+              {/* Stop button only when supervised debate is loading */}
+              {activeEntry?.debate_mode && activeEntry.debate_mode !== "autonomous" && loading && (
+                <div className="flex justify-center mt-2">
+                  <button
+                    onClick={stopGeneration}
+                    className="px-4 py-2 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive text-sm font-medium transition-colors border border-destructive/30"
+                  >
+                    Stop Generation
+                  </button>
+                </div>
+              )}
             </div>
           </section>
       </main>
@@ -2446,11 +2586,6 @@ export default function App() {
           regenerateIndex !== null
             ? conversations[threadId]?.[regenerateIndex]?.max_debate_rounds ?? DEFAULT_MAX_DEBATE_ROUNDS
             : DEFAULT_MAX_DEBATE_ROUNDS
-        }
-        defaultStepReview={
-          regenerateIndex !== null
-            ? conversations[threadId]?.[regenerateIndex]?.step_review ?? DEFAULT_STEP_REVIEW
-            : DEFAULT_STEP_REVIEW
         }
       />
 
@@ -2535,9 +2670,8 @@ interface ChatComposerProps {
   onSend: (payload: {
     question: string;
     attachments: string[];
-    customDebateMode?: boolean;
+    customDebateMode?: DebateMode;
     customMaxRounds?: number;
-    customStepReview?: boolean;
   }) => Promise<void>;
   onStop: () => void;
   onClearError: () => void;
@@ -2556,9 +2690,8 @@ function ChatComposer({
   const [question, setQuestion] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [debateSettingsOpen, setDebateSettingsOpen] = useState(false);
-  const [debateMode, setDebateMode] = useState(DEFAULT_DEBATE_MODE);
+  const [debateMode, setDebateMode] = useState<DebateMode | undefined>(DEFAULT_DEBATE_MODE);
   const [maxDebateRounds, setMaxDebateRounds] = useState(DEFAULT_MAX_DEBATE_ROUNDS);
-  const [stepReview, setStepReview] = useState(DEFAULT_STEP_REVIEW);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -2592,7 +2725,6 @@ function ChatComposer({
     const currentAttachments = [...attachments];
     const currentDebateMode = debateMode;
     const currentMaxRounds = maxDebateRounds;
-    const currentStepReview = stepReview;
     setQuestion("");
     setAttachments([]);
 
@@ -2605,7 +2737,6 @@ function ChatComposer({
         attachments: currentAttachments,
         customDebateMode: currentDebateMode,
         customMaxRounds: currentMaxRounds,
-        customStepReview: currentStepReview,
       });
     } catch {
       // On error, restore the content
@@ -2691,13 +2822,17 @@ function ChatComposer({
                       ? "border-accent/60 bg-accent/10 text-accent hover:bg-accent/20"
                       : "border-border/50 bg-background/90 text-foreground hover:bg-muted/60 hover:border-border"
                   }`}
-                  title={debateMode ? "Debate mode enabled - click to configure" : "Click to configure debate mode"}
+                  title={debateMode ? `${debateMode} mode - click to configure` : "Click to enable debate mode"}
                 >
                   <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     <path d="M8 10h.01M12 10h.01M16 10h.01" />
                   </svg>
-                  <span className="hidden sm:inline">Debate</span>
+                  <span className="hidden sm:inline">
+                    {debateMode
+                      ? debateMode === "autonomous" ? "Auto" : debateMode === "supervised" ? "Supervised" : "Participatory"
+                      : "Panel"}
+                  </span>
                   {debateMode && (
                     <span className="hidden sm:inline text-[10px] opacity-70">({maxDebateRounds})</span>
                   )}
@@ -2797,14 +2932,12 @@ function ChatComposer({
       <RegenerateModal
         open={debateSettingsOpen}
         onClose={() => setDebateSettingsOpen(false)}
-        onConfirm={(enabled, rounds, useStepReview) => {
-          setDebateMode(enabled);
+        onConfirm={(mode, rounds) => {
+          setDebateMode(mode);
           setMaxDebateRounds(rounds);
-          setStepReview(useStepReview);
         }}
         defaultDebateMode={debateMode}
         defaultMaxRounds={maxDebateRounds}
-        defaultStepReview={stepReview}
         title="Debate Settings"
         subtitle="Choose settings for your next message"
         confirmLabel="Apply"

@@ -113,14 +113,19 @@ class AskRequest(BaseModel):
     attachments: list[str] | None = None
     panelists: list[PanelistConfig] | None = None
     provider_keys: dict[str, str] | None = None
-    debate_mode: bool | None = False
+    # Debate mode: "autonomous" | "supervised" | "participatory" | None (no debate)
+    # - autonomous: runs without pauses until consensus or max_rounds
+    # - supervised: pauses each round for user to review/vote
+    # - participatory: pauses each round for user input
+    debate_mode: str | None = None
     max_debate_rounds: int | None = 3
-    step_review: bool | None = False
     continue_debate: bool | None = False  # Whether this is continuing a paused debate
-    user_as_participant: bool | None = False  # User is participating (user-debate mode)
-    tagged_panelists: list[str] | None = None  # Panelist names user tagged
-    user_message: str | None = None  # User's message in user-debate
-    exit_user_debate: bool | None = False  # User wants to exit user-debate
+    tagged_panelists: list[str] | None = None  # @mentioned panelist names
+    user_message: str | None = None  # User's message to inject (participatory mode)
+    exit_debate: bool | None = False  # User wants to end the debate early
+    # Adversarial role assignment
+    stance_mode: str | None = "free"  # "free", "adversarial", or "assigned"
+    assigned_roles: dict[str, dict] | None = None  # panelist_name -> role assignment
 
 
 class AskResponse(BaseModel):
@@ -173,11 +178,13 @@ async def ask(req: AskRequest) -> AskResponse:
     if attachment_md:
         question_text = f"{question_text}\n\nAttached images:\n{attachment_md}"
 
+    # Convert new debate_mode to legacy format for LangGraph
+    is_debate = req.debate_mode is not None
     state = {
         "messages": [HumanMessage(content=question_text)],
         "panel_responses": {},
         "summary": None,
-        "debate_mode": req.debate_mode or False,
+        "debate_mode": is_debate,
         "max_debate_rounds": req.max_debate_rounds or 3,
         "debate_round": 0,
         "consensus_reached": False,
@@ -214,7 +221,7 @@ async def ask_stream(req: AskRequest, request: Request):
         logger.info("=" * 80)
         logger.info(f"🔵 [DEBATE] Using AG2 backend for thread: {req.thread_id}")
         logger.info(f"   Question: {req.question[:80]}{'...' if len(req.question) > 80 else ''}")
-        logger.info(f"   Mode: {'debate' if req.debate_mode else 'panel'} | Rounds: {req.max_debate_rounds}")
+        logger.info(f"   Mode: {req.debate_mode or 'panel'} | Rounds: {req.max_debate_rounds}")
         logger.info("=" * 80)
         return await _handle_ag2_debate(req)
     else:
@@ -222,7 +229,7 @@ async def ask_stream(req: AskRequest, request: Request):
         logger.info("=" * 80)
         logger.info(f"🟢 [DEBATE] Using LangGraph backend for thread: {req.thread_id}")
         logger.info(f"   Question: {req.question[:80]}{'...' if len(req.question) > 80 else ''}")
-        logger.info(f"   Mode: {'debate' if req.debate_mode else 'panel'} | Rounds: {req.max_debate_rounds}")
+        logger.info(f"   Mode: {req.debate_mode or 'panel'} | Rounds: {req.max_debate_rounds}")
         logger.info("=" * 80)
         return await _handle_langgraph_debate(req)
 
@@ -246,16 +253,18 @@ async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
                     )
                 else:
                     logger.info(f"Starting AG2 debate for thread {req.thread_id}")
+                    # debate_mode: "autonomous" | "supervised" | "participatory" | None
                     event_iter = service.start_debate(
                         thread_id=req.thread_id,
                         question=req.question,
                         panelists=[p.model_dump() for p in req.panelists] if req.panelists else [],
                         provider_keys=req.provider_keys or {},
-                        debate_mode=req.debate_mode or False,
+                        debate_mode=req.debate_mode or "autonomous",
                         max_debate_rounds=req.max_debate_rounds or 3,
-                        step_review=req.step_review or False,
-                        user_as_participant=req.user_as_participant or False,
                         tagged_panelists=req.tagged_panelists or [],
+                        # Adversarial role assignment
+                        stance_mode=req.stance_mode or "free",
+                        assigned_roles=req.assigned_roles,
                     )
 
                 # Stream events from service as SSE
@@ -329,14 +338,19 @@ async def _handle_langgraph_debate(req: AskRequest) -> StreamingResponse:
         if attachment_md:
             question_text = f"{question_text}\n\nAttached images:\n{attachment_md}"
 
+        # Convert new debate_mode to legacy flags for LangGraph compatibility
+        # debate_mode: "autonomous" | "supervised" | "participatory" | None
+        is_debate = req.debate_mode is not None
+        is_supervised = req.debate_mode in ("supervised", "participatory")
+        is_participatory = req.debate_mode == "participatory"
+
         # If continuing a debate, provide empty state to resume from checkpoint
         if req.continue_debate:
             state = {}  # Empty state tells LangGraph to resume from checkpoint
             logger.info(f"Continuing debate for thread {req.thread_id}")
-            # If exiting user-debate, set flag to force consensus
-            if req.exit_user_debate:
+            # If exiting debate, set flag to force consensus
+            if req.exit_debate:
                 state["consensus_reached"] = True
-                state["user_as_participant"] = False
         else:
             state = {
                 "messages": [HumanMessage(content=question_text)],
@@ -344,14 +358,14 @@ async def _handle_langgraph_debate(req: AskRequest) -> StreamingResponse:
                 "summary": None,
                 "search_results": None,
                 "needs_search": False,
-                "debate_mode": req.debate_mode or False,
+                "debate_mode": is_debate,
                 "max_debate_rounds": req.max_debate_rounds or 3,
                 "debate_round": 0,
                 "consensus_reached": False,
                 "debate_history": [],
-                "step_review": req.step_review or False,
+                "step_review": is_supervised,
                 "debate_paused": False,
-                "user_as_participant": req.user_as_participant or False,
+                "user_as_participant": is_participatory,
                 "tagged_panelists": req.tagged_panelists or [],
                 "user_message": req.user_message,
             }
@@ -388,8 +402,8 @@ async def _handle_langgraph_debate(req: AskRequest) -> StreamingResponse:
             else:
                 max_rounds = req.max_debate_rounds or 3
                 if req.debate_mode:
-                    suffix = " (step review)" if req.step_review else ""
-                    yield f"data: {json.dumps({'type': 'status', 'message': f'Starting debate (max {max_rounds} rounds){suffix}...'})}\n\n"
+                    mode_label = f" ({req.debate_mode})" if req.debate_mode != "autonomous" else ""
+                    yield f"data: {json.dumps({'type': 'status', 'message': f'Starting debate (max {max_rounds} rounds){mode_label}...'})}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'status', 'message': 'Starting panel...'})}\n\n"
 

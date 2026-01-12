@@ -1,4 +1,4 @@
-import type { AskRequestBody, AskResponse, DebateRound } from "./types";
+import type { AskRequestBody, AskResponse, DebateRound, StanceData } from "./types";
 export declare function askPanel(body: AskRequestBody): Promise<AskResponse>;
 export interface SearchSource {
     url: string;
@@ -12,6 +12,8 @@ export declare function askPanelStream(body: AskRequestBody, callbacks: {
     onSearchSource?: (source: SearchSource) => void;
     onPanelistResponse?: (panelist: string, response: string) => void;
     onDebateRound?: (round: DebateRound) => void;
+    onStanceExtracted?: (panelist: string, stance: StanceData) => void;
+    onRolesAssigned?: (roles: Record<string, string>) => void;
     onResult?: (result: AskResponse) => void;
     onDebatePaused?: (result: Partial<AskResponse>) => void;
     onError?: (error: Error) => void;

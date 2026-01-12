@@ -1,9 +1,11 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Markdown } from "./Markdown";
 import { PROVIDER_LABELS } from "../lib/modelProviders";
-export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = false, debatePaused = false, onContinue, tagged_panelists = [], user_as_participant = false }) {
+import { DebateScoreboard } from "./DebateScoreboard";
+import { StanceIndicator } from "./StanceIndicator";
+export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = false, debatePaused = false, onContinue, tagged_panelists = [], user_as_participant = false, scores, onVote, }) {
     const [expandedRounds, setExpandedRounds] = useState(() => {
         // Auto-expand the first round initially
         if (debateHistory.length > 0) {
@@ -11,6 +13,47 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
         }
         return new Set();
     });
+    // Extract latest stances from debate history
+    const latestStances = useMemo(() => {
+        if (debateHistory.length === 0)
+            return {};
+        const latestRound = debateHistory[debateHistory.length - 1];
+        if (!latestRound.stances)
+            return {};
+        const result = {};
+        for (const [name, stance] of Object.entries(latestRound.stances)) {
+            if (stance && typeof stance === "object") {
+                result[name] = {
+                    stance: stance.stance || "NEUTRAL",
+                    confidence: stance.confidence || 0.5,
+                    changed_from_previous: stance.changed_from_previous || false,
+                    core_claim: stance.core_claim,
+                };
+            }
+        }
+        return result;
+    }, [debateHistory]);
+    // Calculate scores from debate history if not provided
+    const computedScores = useMemo(() => {
+        if (scores && Object.keys(scores).length > 0)
+            return scores;
+        if (debateHistory.length === 0)
+            return {};
+        const result = {};
+        const latestRound = debateHistory[debateHistory.length - 1];
+        if (latestRound.scores) {
+            for (const [name, scoreData] of Object.entries(latestRound.scores)) {
+                if (scoreData && typeof scoreData === "object") {
+                    result[name] = {
+                        cumulative: scoreData.cumulative_total || 0,
+                        roundDelta: scoreData.round_total || 0,
+                        events: scoreData.events || [],
+                    };
+                }
+            }
+        }
+        return result;
+    }, [debateHistory, scores]);
     // When new rounds arrive, auto-expand the latest one
     useEffect(() => {
         if (debateHistory.length > 0) {
@@ -37,8 +80,9 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
     // and wait for user to click Continue to trigger the next round from the backend
     const roundsToShow = debateHistory;
     // Show continue button only when debate is actively paused (waiting for user)
-    const showContinueButton = debatePaused && onContinue;
-    return (_jsxs("div", { className: "mt-6 space-y-3", children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsxs("div", { className: "flex items-center gap-2 text-xs text-muted-foreground", children: [_jsxs("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }), _jsx("path", { d: "M8 10h.01M12 10h.01M16 10h.01" })] }), _jsxs("span", { className: "font-medium", children: ["Debate Rounds (", roundsToShow.length, stepReview ? ` of ${debateHistory.length}` : '', ")"] })] }), stepReview && (_jsx("span", { className: "text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium", children: "Step Review Mode" }))] }), _jsx("div", { className: "space-y-2", children: roundsToShow.map((round) => {
+    // BUT not in stepReview mode - App.tsx has its own user input area at the bottom
+    const showContinueButton = debatePaused && onContinue && !stepReview;
+    return (_jsxs("div", { className: "mt-6 space-y-3", children: [Object.keys(computedScores).length > 0 && (_jsx(DebateScoreboard, { scores: computedScores, showDetails: stepReview })), Object.keys(latestStances).length > 0 && (_jsx(StanceIndicator, { stances: latestStances, showClaims: stepReview })), _jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsxs("div", { className: "flex items-center gap-2 text-xs text-muted-foreground", children: [_jsxs("svg", { viewBox: "0 0 24 24", className: "w-4 h-4", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }), _jsx("path", { d: "M8 10h.01M12 10h.01M16 10h.01" })] }), _jsxs("span", { className: "font-medium", children: ["Debate Rounds (", roundsToShow.length, stepReview ? ` of ${debateHistory.length}` : '', ")"] })] }), stepReview && (_jsx("span", { className: "text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-medium", children: "Step Review Mode" }))] }), _jsx("div", { className: "space-y-2", children: roundsToShow.map((round) => {
                     const isExpanded = expandedRounds.has(round.round_number);
                     const isLatest = round.round_number === debateHistory[debateHistory.length - 1].round_number;
                     return (_jsxs("div", { className: `rounded-lg border transition-all ${isLatest

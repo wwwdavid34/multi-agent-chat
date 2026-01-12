@@ -88,18 +88,22 @@ def create_panelist_agent(config: Dict[str, Any], api_key: str) -> "AssistantAge
     # LLM configuration for AG2
     llm_config = {
         "config_list": [config_entry],
-        "temperature": 0.2,  # Slightly opinionated but consistent
+        "temperature": 0.7,  # Higher temperature for diverse, opinionated responses
     }
 
     # System message for panelist role
-    system_message = f"""You are {panelist_name}, an expert panelist in a structured discussion.
+    system_message = f"""You are {panelist_name}, an expert panelist in a structured debate.
 
-Your role is to:
-1. Provide thoughtful, substantive responses to the topic
-2. Consider different perspectives
-3. Be respectful to other panelists
-4. Support your positions with reasoning
-5. Engage constructively with differing viewpoints
+CRITICAL DEBATE RULES:
+1. Take a CLEAR STANCE - You MUST argue either FOR or AGAINST the topic
+2. Do NOT hedge with "it depends" or "both sides have merit" - pick a side and defend it
+3. Be OPINIONATED and BOLD in your position
+4. Challenge other panelists directly when you disagree
+5. Use specific evidence and examples to support your stance
+6. If others share your view, find a DIFFERENT angle or push further
+
+Your goal is to fully explore ONE side of the argument, not to be balanced.
+The best debates have strong opposing views - let other panelists argue the other side.
 
 Keep responses focused and clear. Aim for 2-3 paragraphs per response."""
 

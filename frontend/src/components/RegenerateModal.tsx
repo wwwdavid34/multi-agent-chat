@@ -1,13 +1,13 @@
-import React, { ReactNode, useState } from "react";
+import React, { ReactNode, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import type { DebateMode } from "../types";
 
 interface RegenerateModalProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (debateMode: boolean, maxDebateRounds: number, stepReview: boolean) => void;
-  defaultDebateMode?: boolean;
+  onConfirm: (debateMode: DebateMode | undefined, maxDebateRounds: number) => void;
+  defaultDebateMode?: DebateMode;
   defaultMaxRounds?: number;
-  defaultStepReview?: boolean;
   title?: string;
   subtitle?: string;
   confirmLabel?: string;
@@ -19,21 +19,27 @@ export function RegenerateModal({
   open,
   onClose,
   onConfirm,
-  defaultDebateMode = false,
+  defaultDebateMode,
   defaultMaxRounds = 3,
-  defaultStepReview = false,
   title = "Regenerate Response",
   subtitle = "Choose settings for this regeneration",
   confirmLabel = "Regenerate",
   headerIcon,
   confirmIcon,
 }: RegenerateModalProps) {
-  const [debateMode, setDebateMode] = useState(defaultDebateMode);
+  const [debateMode, setDebateMode] = useState<DebateMode | undefined>(defaultDebateMode);
   const [maxDebateRounds, setMaxDebateRounds] = useState(defaultMaxRounds);
-  const [stepReview, setStepReview] = useState(defaultStepReview);
+
+  // Reset state when modal opens with new defaults
+  useEffect(() => {
+    if (open) {
+      setDebateMode(defaultDebateMode);
+      setMaxDebateRounds(defaultMaxRounds);
+    }
+  }, [open, defaultDebateMode, defaultMaxRounds]);
 
   const handleConfirm = () => {
-    onConfirm(debateMode, maxDebateRounds, stepReview);
+    onConfirm(debateMode, maxDebateRounds);
     onClose();
   };
 
@@ -44,6 +50,13 @@ export function RegenerateModal({
       <path d="M4 12a8 8 0 0 1 8-8 8 8 0 0 1 6.18 2.82l2.82-2.82M20 4v6h-6M20 12a8 8 0 0 1-8 8 8 8 0 0 1-6.18-2.82l-2.82 2.82M4 20v-6h6" />
     </svg>
   );
+
+  const modeOptions: { value: DebateMode | undefined; label: string; description: string }[] = [
+    { value: undefined, label: "Panel (No Debate)", description: "Single round of responses from all panelists" },
+    { value: "autonomous", label: "Autonomous Debate", description: "Debate runs until consensus or max rounds" },
+    { value: "supervised", label: "Supervised Debate", description: "Pause after each round for review" },
+    { value: "participatory", label: "Participatory Debate", description: "Pause for your input each round" },
+  ];
 
   return (
     <AnimatePresence>
@@ -85,24 +98,32 @@ export function RegenerateModal({
 
           {/* Content */}
           <div className="p-6 space-y-5">
-            {/* Debate Mode Toggle */}
-            <div className="rounded-lg border border-border p-4 bg-card">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-semibold m-0">Enable Debate Mode</h4>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Agents will debate until consensus or max rounds
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={debateMode}
-                    onChange={(e) => setDebateMode(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-accent/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-                </label>
+            {/* Debate Mode Selection */}
+            <div className="space-y-2">
+              <h4 className="text-sm font-semibold m-0">Mode</h4>
+              <div className="space-y-2">
+                {modeOptions.map((option) => (
+                  <label
+                    key={option.label}
+                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      debateMode === option.value
+                        ? "border-accent bg-accent/5"
+                        : "border-border hover:bg-muted/50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="debateMode"
+                      checked={debateMode === option.value}
+                      onChange={() => setDebateMode(option.value)}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <div>
+                      <div className="text-sm font-medium">{option.label}</div>
+                      <div className="text-xs text-muted-foreground">{option.description}</div>
+                    </div>
+                  </label>
+                ))}
               </div>
             </div>
 
@@ -143,43 +164,16 @@ export function RegenerateModal({
               )}
             </AnimatePresence>
 
-            {/* Step Review Mode (only shown when debate mode is enabled) */}
-            <AnimatePresence>
-              {debateMode && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="rounded-lg border border-border p-4 bg-card overflow-hidden"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-sm font-semibold m-0">Enable Step Review Mode</h4>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Reveal debate rounds one at a time
-                      </p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={stepReview}
-                        onChange={(e) => setStepReview(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-accent/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-                    </label>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             {/* Info box */}
             <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
               <p className="text-xs text-muted-foreground m-0">
-                {debateMode
-                  ? `The panel will debate for up to ${maxDebateRounds} round${maxDebateRounds > 1 ? 's' : ''} or until consensus is reached.${stepReview ? ' Rounds will be revealed step-by-step.' : ''}`
-                  : "The panel will provide immediate responses without debate."}
+                {debateMode === undefined
+                  ? "The panel will provide immediate responses without debate."
+                  : debateMode === "autonomous"
+                  ? `The panel will debate for up to ${maxDebateRounds} round${maxDebateRounds > 1 ? 's' : ''} or until consensus is reached.`
+                  : debateMode === "supervised"
+                  ? `Debate will pause after each round for you to review. Up to ${maxDebateRounds} rounds.`
+                  : `You can add input and @mention panelists each round. Up to ${maxDebateRounds} rounds.`}
               </p>
             </div>
           </div>
