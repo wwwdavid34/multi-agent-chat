@@ -1,15 +1,31 @@
 /**
  * UserMenu - User profile dropdown with logout and settings
+ * For guests: shows login button
+ * For authenticated users: shows profile dropdown with settings, import, logout
  */
 
 import React, { useState, useRef, useEffect } from "react";
 import { useAuth } from "../../hooks/useAuth";
-import { LogOut, User, Settings, Key } from "lucide-react";
+import { LogOut, User, Settings, Upload, Moon, Sun } from "lucide-react";
+import { GoogleLoginButton } from "./GoogleLoginButton";
+import { useTheme } from "../theme-provider";
 
-export function UserMenu() {
-  const { user, logout } = useAuth();
+interface UserMenuProps {
+  onOpenSettings?: () => void;
+  onImportThread?: () => void;
+}
+
+export function UserMenu({ onOpenSettings, onImportThread }: UserMenuProps) {
+  const { user, isAuthenticated, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  const toggleTheme = () => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -17,49 +33,107 @@ export function UserMenu() {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        setShowLoginModal(false);
+      }
     }
 
-    if (isOpen) {
+    if (isOpen || showLoginModal) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [isOpen]);
+  }, [isOpen, showLoginModal]);
 
-  if (!user) return null;
+  // Guest user - show sign in button and theme toggle
+  if (!isAuthenticated) {
+    return (
+      <>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowLoginModal(true)}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-accent text-accent-foreground hover:bg-accent/90 transition-colors text-sm font-medium"
+          >
+            <User className="w-4 h-4" />
+            Sign in
+          </button>
+          <button
+            onClick={toggleTheme}
+            className="p-2.5 rounded-lg hover:bg-muted/60 transition-colors"
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? (
+              <Moon className="w-4 h-4 text-muted-foreground" />
+            ) : (
+              <Sun className="w-4 h-4 text-muted-foreground" />
+            )}
+          </button>
+        </div>
 
-  const initials = user.name
+        {/* Login Modal */}
+        {showLoginModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm">
+            <div
+              ref={modalRef}
+              className="bg-background rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8 border border-border"
+            >
+              <div className="text-center mb-6">
+                <h2 className="text-2xl font-bold tracking-tight">Welcome</h2>
+                <p className="mt-2 text-muted-foreground text-sm">
+                  Sign in to save your conversations and access them anywhere
+                </p>
+              </div>
+
+              <GoogleLoginButton />
+
+              <div className="mt-6 text-center">
+                <button
+                  onClick={() => setShowLoginModal(false)}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Continue as guest
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // Authenticated user
+  const initials = user?.name
     ? user.name
         .split(" ")
         .map((n) => n[0])
         .join("")
         .toUpperCase()
         .slice(0, 2)
-    : user.email[0].toUpperCase();
+    : user?.email?.[0].toUpperCase() || "U";
 
   return (
     <div className="relative" ref={menuRef}>
       {/* User Avatar Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        title={user.email}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted/60 transition-colors w-full"
+        title={user?.email}
       >
-        {user.picture_url ? (
+        {user?.picture_url ? (
           <img
             src={user.picture_url}
             alt={user.name || user.email}
             className="w-8 h-8 rounded-full"
           />
         ) : (
-          <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium">
+          <div className="w-8 h-8 rounded-full bg-accent text-accent-foreground flex items-center justify-center text-sm font-medium">
             {initials}
           </div>
         )}
-        <span className="hidden sm:block text-sm font-medium text-gray-700 dark:text-gray-300">
-          {user.name || user.email.split("@")[0]}
+        <span className="flex-1 text-left text-sm font-medium text-foreground truncate">
+          {user?.name || user?.email?.split("@")[0]}
         </span>
         <svg
-          className={`w-4 h-4 text-gray-500 transition-transform ${
+          className={`w-4 h-4 text-muted-foreground transition-transform ${
             isOpen ? "rotate-180" : ""
           }`}
           fill="none"
@@ -77,29 +151,29 @@ export function UserMenu() {
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute left-0 bottom-full mb-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50">
+        <div className="absolute left-0 bottom-full mb-2 w-full bg-background rounded-lg shadow-lg border border-border z-50">
           {/* User Info */}
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <div className="px-4 py-3 border-b border-border">
             <div className="flex items-center gap-3">
-              {user.picture_url ? (
+              {user?.picture_url ? (
                 <img
                   src={user.picture_url}
                   alt={user.name || user.email}
                   className="w-10 h-10 rounded-full"
                 />
               ) : (
-                <div className="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium">
+                <div className="w-10 h-10 rounded-full bg-accent text-accent-foreground flex items-center justify-center text-sm font-medium">
                   {initials}
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                {user.name && (
-                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                {user?.name && (
+                  <p className="text-sm font-medium text-foreground truncate">
                     {user.name}
                   </p>
                 )}
-                <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                  {user.email}
+                <p className="text-xs text-muted-foreground truncate">
+                  {user?.email}
                 </p>
               </div>
             </div>
@@ -107,54 +181,57 @@ export function UserMenu() {
 
           {/* Menu Items */}
           <div className="py-1">
-            <button
-              onClick={() => {
-                setIsOpen(false);
-                // TODO: Navigate to profile page
-                console.log("Profile clicked");
-              }}
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
-            >
-              <User className="w-4 h-4" />
-              Profile
-            </button>
+            {onOpenSettings && (
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenSettings();
+                }}
+                className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-muted/60 flex items-center gap-3"
+              >
+                <Settings className="w-4 h-4 text-muted-foreground" />
+                Panel Settings
+              </button>
+            )}
 
-            <button
-              onClick={() => {
-                setIsOpen(false);
-                // TODO: Navigate to settings page
-                console.log("Settings clicked");
-              }}
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
-            >
-              <Settings className="w-4 h-4" />
-              Settings
-            </button>
+            {onImportThread && (
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  onImportThread();
+                }}
+                className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-muted/60 flex items-center gap-3"
+              >
+                <Upload className="w-4 h-4 text-muted-foreground" />
+                Import Thread
+              </button>
+            )}
 
+            {/* Theme Toggle */}
             <button
-              onClick={() => {
-                setIsOpen(false);
-                // TODO: Navigate to API keys page
-                console.log("API Keys clicked");
-              }}
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+              onClick={toggleTheme}
+              className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-muted/60 flex items-center gap-3"
             >
-              <Key className="w-4 h-4" />
-              API Keys
+              {theme === "dark" ? (
+                <Sun className="w-4 h-4 text-muted-foreground" />
+              ) : (
+                <Moon className="w-4 h-4 text-muted-foreground" />
+              )}
+              {theme === "dark" ? "Light Mode" : "Dark Mode"}
             </button>
           </div>
 
           {/* Logout */}
-          <div className="border-t border-gray-200 dark:border-gray-700 py-1">
+          <div className="border-t border-border py-1">
             <button
               onClick={() => {
                 setIsOpen(false);
                 logout();
               }}
-              className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+              className="w-full px-4 py-2.5 text-left text-sm text-destructive hover:bg-destructive/10 flex items-center gap-3"
             >
               <LogOut className="w-4 h-4" />
-              Log out
+              Sign out
             </button>
           </div>
         </div>

@@ -93,13 +93,35 @@ export function DebateViewer({ debateHistory, panelists, onCopy, stepReview = fa
                                                 .filter(([_, response]) => response && typeof response === 'string' && response.trim())
                                                 .map(([name, response]) => {
                                                 const panelist = panelists.find((p) => p.name === name);
-                                                const isTagged = tagged_panelists.includes(name);
-                                                const isWatching = user_as_participant && !isTagged;
+                                                // Case-insensitive check for @mentions
+                                                const isTagged = tagged_panelists.some(tag => tag.toLowerCase() === name.toLowerCase());
+                                                // Check if ANY tagged panelist matches a real panelist (otherwise ignore tags)
+                                                const panelistNames = Object.keys(round.panel_responses);
+                                                const hasValidTags = tagged_panelists.some(tag => panelistNames.some(pName => pName.toLowerCase() === tag.toLowerCase()));
+                                                // Only show "watching" if valid @mentions exist AND this panelist wasn't mentioned
+                                                const isWatching = user_as_participant && hasValidTags && !isTagged;
+                                                // Get stance for this panelist in this round
+                                                const panelistStance = round.stances?.[name];
+                                                const stanceValue = panelistStance && typeof panelistStance === 'object'
+                                                    ? panelistStance.stance
+                                                    : null;
+                                                // Stance badge styling
+                                                const getStanceBadge = (stance) => {
+                                                    if (!stance)
+                                                        return null;
+                                                    const styles = {
+                                                        'FOR': 'bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30',
+                                                        'AGAINST': 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
+                                                        'CONDITIONAL': 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
+                                                        'NEUTRAL': 'bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/30',
+                                                    };
+                                                    return styles[stance] || styles['NEUTRAL'];
+                                                };
                                                 return (_jsxs("div", { className: `rounded-lg border p-3 transition-colors group/response ${isWatching
                                                         ? "border-border/20 bg-muted/5"
                                                         : "border-border/30 bg-background hover:bg-muted/20"}`, children: [_jsxs("div", { className: "flex items-center justify-between gap-3 mb-2", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsx("div", { className: `w-6 h-6 rounded-full flex items-center justify-center font-semibold text-xs ${isWatching
                                                                                 ? "bg-muted text-muted-foreground"
-                                                                                : "bg-accent/10 text-accent"}`, children: name.charAt(0).toUpperCase() }), _jsxs("div", { className: "flex flex-col", children: [_jsx("span", { className: `text-xs font-semibold ${isWatching ? "text-muted-foreground" : "text-foreground"}`, children: name }), panelist && (_jsxs("span", { className: "text-[10px] text-muted-foreground", children: [PROVIDER_LABELS[panelist.provider], " \u00B7 ", panelist.model] }))] })] }), !isWatching && onCopy && (_jsx("button", { type: "button", onClick: () => onCopy(response), className: "opacity-0 group-hover/response:opacity-100 p-1.5 rounded hover:bg-muted/40 transition-all", title: "Copy response", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) }))] }), isWatching ? (_jsx("div", { className: "text-xs italic text-muted-foreground", children: "Watching this discussion..." })) : (_jsx("div", { className: "text-xs leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none", children: _jsx(Markdown, { content: response }) }))] }, name));
+                                                                                : "bg-accent/10 text-accent"}`, children: name.charAt(0).toUpperCase() }), _jsxs("div", { className: "flex flex-col", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsx("span", { className: `text-xs font-semibold ${isWatching ? "text-muted-foreground" : "text-foreground"}`, children: name }), stanceValue && (_jsx("span", { className: `text-[9px] font-bold px-1.5 py-0.5 rounded border ${getStanceBadge(stanceValue)}`, children: stanceValue }))] }), panelist && (_jsxs("span", { className: "text-[10px] text-muted-foreground", children: [PROVIDER_LABELS[panelist.provider], " \u00B7 ", panelist.model] }))] })] }), !isWatching && onCopy && (_jsx("button", { type: "button", onClick: () => onCopy(response), className: "opacity-0 group-hover/response:opacity-100 p-1.5 rounded hover:bg-muted/40 transition-all", title: "Copy response", children: _jsxs("svg", { viewBox: "0 0 24 24", className: "w-3.5 h-3.5 text-muted-foreground", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [_jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }), _jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })] }) }))] }), isWatching ? (_jsx("div", { className: "text-xs italic text-muted-foreground", children: "Watching this discussion..." })) : (_jsx("div", { className: "text-xs leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none", children: _jsx(Markdown, { content: response }) }))] }, name));
                                             })] }) })) })] }, round.round_number));
                 }) }), showContinueButton && (_jsxs(motion.button, { type: "button", onClick: (e) => {
                     e.preventDefault();

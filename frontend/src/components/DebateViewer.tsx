@@ -245,8 +245,33 @@ export function DebateViewer({
                         .filter(([_, response]) => response && typeof response === 'string' && response.trim())
                         .map(([name, response]) => {
                         const panelist = panelists.find((p) => p.name === name);
-                        const isTagged = tagged_panelists.includes(name);
-                        const isWatching = user_as_participant && !isTagged;
+                        // Case-insensitive check for @mentions
+                        const isTagged = tagged_panelists.some(tag => tag.toLowerCase() === name.toLowerCase());
+                        // Check if ANY tagged panelist matches a real panelist (otherwise ignore tags)
+                        const panelistNames = Object.keys(round.panel_responses);
+                        const hasValidTags = tagged_panelists.some(tag =>
+                          panelistNames.some(pName => pName.toLowerCase() === tag.toLowerCase())
+                        );
+                        // Only show "watching" if valid @mentions exist AND this panelist wasn't mentioned
+                        const isWatching = user_as_participant && hasValidTags && !isTagged;
+
+                        // Get stance for this panelist in this round
+                        const panelistStance = round.stances?.[name];
+                        const stanceValue = panelistStance && typeof panelistStance === 'object'
+                          ? (panelistStance as any).stance
+                          : null;
+
+                        // Stance badge styling
+                        const getStanceBadge = (stance: string | null) => {
+                          if (!stance) return null;
+                          const styles: Record<string, string> = {
+                            'FOR': 'bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30',
+                            'AGAINST': 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
+                            'CONDITIONAL': 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
+                            'NEUTRAL': 'bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/30',
+                          };
+                          return styles[stance] || styles['NEUTRAL'];
+                        };
 
                         return (
                           <div
@@ -267,11 +292,18 @@ export function DebateViewer({
                                   {name.charAt(0).toUpperCase()}
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className={`text-xs font-semibold ${
-                                    isWatching ? "text-muted-foreground" : "text-foreground"
-                                  }`}>
-                                    {name}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-xs font-semibold ${
+                                      isWatching ? "text-muted-foreground" : "text-foreground"
+                                    }`}>
+                                      {name}
+                                    </span>
+                                    {stanceValue && (
+                                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${getStanceBadge(stanceValue)}`}>
+                                        {stanceValue}
+                                      </span>
+                                    )}
+                                  </div>
                                   {panelist && (
                                     <span className="text-[10px] text-muted-foreground">
                                       {PROVIDER_LABELS[panelist.provider]} · {panelist.model}
