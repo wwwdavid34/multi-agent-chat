@@ -105,6 +105,7 @@ class PanelistConfig(BaseModel):
     name: str
     provider: str
     model: str
+    role: str | None = None  # PRO, CON, DEVIL_ADVOCATE
 
 
 class AskRequest(BaseModel):

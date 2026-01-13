@@ -42,7 +42,8 @@ export type DebateMode = "autonomous" | "supervised" | "participatory";
 
 export interface AssignedRole {
   panelist_name: string;
-  role: "PRO" | "CON" | "DEVIL_ADVOCATE" | "NEUTRAL";
+  // PRO = argue FOR, CON = argue AGAINST, DEVIL_ADVOCATE = neutral critic (challenges both sides)
+  role: "PRO" | "CON" | "DEVIL_ADVOCATE";
   position_statement: string;
   constraints: string[];
 }
@@ -54,11 +55,15 @@ export interface ProviderModel {
   label: string;
 }
 
+// Debate role for stance enforcement
+export type DebateRole = "PRO" | "CON" | "DEVIL_ADVOCATE";
+
 export interface PanelistConfigPayload {
   id: string;
   name: string;
   provider: LLMProvider;
   model: string;
+  role?: DebateRole;  // Pre-assigned debate role (optional, auto-assigned if not set)
 }
 
 export type ProviderKeyMap = Partial<Record<LLMProvider, string>>;

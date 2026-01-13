@@ -184,13 +184,16 @@ class DebateOrchestrator:
         logger.info(f"Injected user message into round {round_number}, mentions: {mentions}")
 
     def _auto_assign_adversarial_roles(self) -> None:
-        """Automatically assign PRO/CON/DEVIL'S ADVOCATE roles to panelists.
+        """Assign PRO/CON/DEVIL'S ADVOCATE roles to panelists.
 
-        Assignment logic (like real debate teams):
-        - Even number of panelists: half PRO, half CON
-        - Odd number of panelists: half PRO, half CON, last one is Devil's Advocate
+        Respects pre-assigned roles from panelist config, only auto-assigns
+        for panelists without a role.
 
-        Examples:
+        Assignment logic for unassigned panelists:
+        - Even number of unassigned: half PRO, half CON
+        - Odd number of unassigned: half PRO, half CON, last one is Devil's Advocate
+
+        Examples (all unassigned):
         - 2 panelists: 1 PRO, 1 CON
         - 3 panelists: 1 PRO, 1 CON, 1 DEVIL'S ADVOCATE
         - 4 panelists: 2 PRO, 2 CON
@@ -204,65 +207,112 @@ class DebateOrchestrator:
             self.state["assigned_roles"] = {}
             return
 
-        # Calculate how many PRO and CON panelists
-        # Odd: last one is Devil's Advocate, rest split evenly
-        # Even: split evenly between PRO and CON
-        has_devils_advocate = (n % 2 == 1)
-        debate_count = n - 1 if has_devils_advocate else n
-        pro_count = debate_count // 2
-        con_count = debate_count - pro_count
-
         roles = {}
-        pro_assigned = 0
-        con_assigned = 0
+
+        # First pass: collect pre-assigned roles from panelist configs
+        pre_assigned_count = {"PRO": 0, "CON": 0, "DEVIL_ADVOCATE": 0}
+        unassigned_panelists = []
 
         for i, panelist in enumerate(panelists):
             name = panelist.get("name", f"Panelist_{i}")
+            pre_role = panelist.get("role")  # Check for pre-assigned role
 
-            # Last panelist is Devil's Advocate if odd number
-            if has_devils_advocate and i == n - 1:
-                role = "DEVIL_ADVOCATE"
-                position = "STRICTLY NEUTRAL CRITIC - You do NOT support either side of this debate"
-                constraints = [
-                    "ABSOLUTE RULE: Your stance is NEUTRAL - never FOR, never AGAINST",
-                    "You exist ONLY to critique - you have NO personal position on the topic",
-                    "When PRO argues, you MUST find flaws in their reasoning",
-                    "When CON argues, you MUST find flaws in their reasoning too",
-                    "You NEVER say 'I agree' or 'I support' any position",
-                    "You ALWAYS say 'However PRO/CON fails to consider...'",
-                    "If asked your position, say 'As Devil's Advocate, I take no side'"
-                ]
-            elif pro_assigned < pro_count:
-                role = "PRO"
-                position = f"Argue FOR: {question}"
-                constraints = [
-                    "You MUST argue in favor of the proposition",
-                    "Find and emphasize positive aspects and benefits",
-                    "Counter all arguments from CON panelists",
-                    "Never concede that the proposition is wrong"
-                ]
-                pro_assigned += 1
+            if pre_role in ("PRO", "CON", "DEVIL_ADVOCATE"):
+                # Use pre-assigned role
+                pre_assigned_count[pre_role] += 1
+                role = pre_role
+                if role == "PRO":
+                    position = f"Argue FOR: {question}"
+                    constraints = [
+                        "You MUST argue in favor of the proposition",
+                        "Find and emphasize positive aspects and benefits",
+                        "Counter all arguments from CON panelists",
+                        "Never concede that the proposition is wrong"
+                    ]
+                elif role == "CON":
+                    position = f"Argue AGAINST: {question}"
+                    constraints = [
+                        "You MUST argue against the proposition",
+                        "Find and emphasize negative aspects, risks, and problems",
+                        "Counter all arguments from PRO panelists",
+                        "Never concede that the proposition is right"
+                    ]
+                else:  # DEVIL_ADVOCATE
+                    position = "STRICTLY NEUTRAL CRITIC - You do NOT support either side of this debate"
+                    constraints = [
+                        "ABSOLUTE RULE: Your stance is NEUTRAL - never FOR, never AGAINST",
+                        "You exist ONLY to critique - you have NO personal position on the topic",
+                        "When PRO argues, you MUST find flaws in their reasoning",
+                        "When CON argues, you MUST find flaws in their reasoning too",
+                        "You NEVER say 'I agree' or 'I support' any position"
+                    ]
+
+                roles[name] = {
+                    "panelist_name": name,
+                    "role": role,
+                    "position_statement": position,
+                    "constraints": constraints
+                }
+                logger.info(f"Using pre-assigned role for {name}: {role}")
             else:
-                role = "CON"
-                position = f"Argue AGAINST: {question}"
-                constraints = [
-                    "You MUST argue against the proposition",
-                    "Find and emphasize negative aspects, risks, and problems",
-                    "Counter all arguments from PRO panelists",
-                    "Never concede that the proposition is right"
-                ]
-                con_assigned += 1
+                unassigned_panelists.append((i, panelist, name))
 
-            roles[name] = {
-                "panelist_name": name,
-                "role": role,
-                "position_statement": position,
-                "constraints": constraints
-            }
+        # Second pass: auto-assign roles to remaining panelists
+        unassigned_count = len(unassigned_panelists)
+        if unassigned_count > 0:
+            # Calculate how many PRO and CON needed
+            # Odd: last one is Devil's Advocate, rest split evenly
+            has_devils_advocate = (unassigned_count % 2 == 1)
+            debate_count = unassigned_count - 1 if has_devils_advocate else unassigned_count
+            pro_count = debate_count // 2
+            con_count = debate_count - pro_count
+
+            pro_assigned = 0
+            con_assigned = 0
+
+            for idx, (i, panelist, name) in enumerate(unassigned_panelists):
+                # Last unassigned panelist is Devil's Advocate if odd number
+                if has_devils_advocate and idx == unassigned_count - 1:
+                    role = "DEVIL_ADVOCATE"
+                    position = "STRICTLY NEUTRAL CRITIC - You do NOT support either side of this debate"
+                    constraints = [
+                        "ABSOLUTE RULE: Your stance is NEUTRAL - never FOR, never AGAINST",
+                        "You exist ONLY to critique - you have NO personal position on the topic",
+                        "When PRO argues, you MUST find flaws in their reasoning",
+                        "When CON argues, you MUST find flaws in their reasoning too",
+                        "You NEVER say 'I agree' or 'I support' any position"
+                    ]
+                elif pro_assigned < pro_count:
+                    role = "PRO"
+                    position = f"Argue FOR: {question}"
+                    constraints = [
+                        "You MUST argue in favor of the proposition",
+                        "Find and emphasize positive aspects and benefits",
+                        "Counter all arguments from CON panelists",
+                        "Never concede that the proposition is wrong"
+                    ]
+                    pro_assigned += 1
+                else:
+                    role = "CON"
+                    position = f"Argue AGAINST: {question}"
+                    constraints = [
+                        "You MUST argue against the proposition",
+                        "Find and emphasize negative aspects, risks, and problems",
+                        "Counter all arguments from PRO panelists",
+                        "Never concede that the proposition is right"
+                    ]
+                    con_assigned += 1
+
+                roles[name] = {
+                    "panelist_name": name,
+                    "role": role,
+                    "position_statement": position,
+                    "constraints": constraints
+                }
 
         self.state["assigned_roles"] = roles
         role_summary = {name: info["role"] for name, info in roles.items()}
-        logger.info(f"Auto-assigned adversarial roles: {role_summary}")
+        logger.info(f"Assigned adversarial roles: {role_summary}")
 
     def _build_role_enhanced_prompt(self, panelist_name: str, base_prompt: str) -> str:
         """Build system prompt with role constraints for adversarial debates.
@@ -282,9 +332,13 @@ class DebateOrchestrator:
         if not role:
             return base_prompt
 
-        role_type = role.get("role", "NEUTRAL")
+        role_type = role.get("role", "")
         position = role.get("position_statement", "")
         constraints = role.get("constraints", [])
+
+        if not role_type:
+            # No role specified, return unmodified prompt
+            return base_prompt
 
         # Build emphatic role instructions
         if role_type == "PRO":
@@ -297,6 +351,8 @@ class DebateOrchestrator:
             stance_instruction = "You are the Devil's Advocate. You MUST NOT take a FOR or AGAINST position. Stay NEUTRAL and criticize BOTH sides equally."
             forbidden = "FORBIDDEN: Do NOT support either PRO or CON. Do NOT say 'I agree with...' for either side. You must criticize BOTH positions."
         else:
+            # Unknown role type - log warning and use generic fallback
+            logger.warning(f"Unknown role type '{role_type}' for {panelist_name}")
             stance_instruction = "Present a balanced analysis."
             forbidden = ""
 
@@ -466,9 +522,31 @@ This shows intellectual honesty and may help recover your standing.
         panelists = self.state.get("panelists") or []
         provider_keys = self.state.get("provider_keys") or {}
 
+        # Debug: Log received panelist configurations
+        logger.info(f"🔵 [ROLE-DEBUG] Received {len(panelists)} panelist configs:")
+        for p in panelists:
+            logger.info(f"   - {p.get('name')}: provider={p.get('provider')}, role={p.get('role')}")
+
+        # Get assigned roles (includes both pre-assigned and auto-assigned)
+        assigned_roles = self.state.get("assigned_roles") or {}
+
         for panelist_config in panelists:
             try:
                 provider = panelist_config.get("provider", "openai")
+                panelist_name = panelist_config.get("name", "")
+
+                # Inject the assigned role into config for persona-based prompt
+                # This ensures auto-assigned roles also get persona prompts
+                effective_role = panelist_config.get("role")  # Pre-assigned from frontend
+                if effective_role:
+                    logger.info(f"🔵 [ROLE-DEBUG] {panelist_name}: Using PRE-ASSIGNED role '{effective_role}'")
+                elif panelist_name in assigned_roles:
+                    # Use auto-assigned role
+                    effective_role = assigned_roles[panelist_name].get("role")
+                    logger.info(f"🔵 [ROLE-DEBUG] {panelist_name}: Using AUTO-ASSIGNED role '{effective_role}'")
+
+                # Create a copy of config with the effective role
+                config_with_role = {**panelist_config, "role": effective_role}
 
                 # Get API key for this provider from provider_keys, with fallbacks
                 if provider in provider_keys and provider_keys[provider]:
@@ -486,17 +564,9 @@ This shows intellectual honesty and may help recover your standing.
                     api_key = get_openai_api_key()
                     logger.warning(f"Unknown provider '{provider}', falling back to OpenAI API key")
 
-                agent = create_panelist_agent(panelist_config, api_key)
-
-                # Apply role-enhanced prompt if adversarial roles are assigned
-                panelist_name = panelist_config.get("name", "")
-                if self.state.get("assigned_roles") and panelist_name:
-                    original_prompt = getattr(agent, "system_message", "")
-                    enhanced_prompt = self._build_role_enhanced_prompt(panelist_name, original_prompt)
-                    if hasattr(agent, "update_system_message"):
-                        agent.update_system_message(enhanced_prompt)
-                    elif hasattr(agent, "system_message"):
-                        agent.system_message = enhanced_prompt
+                # Create agent with role for persona-based prompt
+                # All agents now get persona prompts (both pre-assigned and auto-assigned)
+                agent = create_panelist_agent(config_with_role, api_key)
 
                 self.agents.append(agent)
                 assigned_role = (self.state.get("assigned_roles") or {}).get(panelist_name, {}).get("role", "")
@@ -605,14 +675,16 @@ This shows intellectual honesty and may help recover your standing.
                 # Build explicit role assignments for the debate
                 role_assignments = []
                 for name, role_info in assigned_roles.items():
-                    role_type = role_info.get("role", "NEUTRAL")
+                    role_type = role_info.get("role", "")
                     if role_type == "PRO":
                         role_assignments.append(f"  - {name}: You MUST argue FOR the proposition")
                     elif role_type == "CON":
                         role_assignments.append(f"  - {name}: You MUST argue AGAINST the proposition")
                     elif role_type == "DEVIL_ADVOCATE":
                         role_assignments.append(f"  - {name}: DEVIL'S ADVOCATE - Do NOT take sides, criticize BOTH PRO and CON equally")
-                    else:
+                    elif role_type:
+                        # Unknown role - log and use generic
+                        logger.warning(f"Unknown role type '{role_type}' in role assignments")
                         role_assignments.append(f"  - {name}: Present a balanced analysis")
 
                 role_section = "\n".join(role_assignments)
@@ -634,11 +706,11 @@ RULES FOR CON PANELISTS:
 - Your stance MUST be: AGAINST
 
 SPECIAL RULES FOR DEVIL'S ADVOCATE:
-- You have NO POSITION on this topic - your stance is NEUTRAL
+- YOU ARE FORBIDDEN from starting with "Position: FOR" or "Position: AGAINST"
+- You MUST start with "As Devil's Advocate, I will critique both sides without taking a position."
 - You MUST critique BOTH the PRO arguments AND the CON arguments
-- You MUST NOT say you agree with either side
-- Start by saying "As Devil's Advocate, I critique both sides..."
-- End by saying you take no position
+- You have NO OPINION - you are a critic, not a participant
+- If you take sides, you have FAILED your role
 
 Now, each panelist: state your assigned position clearly and argue for it.
 (PRO: Argue FOR. CON: Argue AGAINST. Devil's Advocate: Critique BOTH sides without taking a position.)"""
@@ -684,6 +756,41 @@ REMINDER:
             # Let each panelist respond
             for agent in self.agents:
                 try:
+                    # Inject per-agent role instruction to ensure they follow their assigned role
+                    assigned_roles = self.state.get("assigned_roles") or {}
+                    agent_role = assigned_roles.get(agent.name, {})
+                    role_type = agent_role.get("role", "")
+
+                    if role_type and is_first_round:
+                        # Inject explicit role instruction for THIS agent
+                        if role_type == "PRO":
+                            role_instruction = f""">>> {agent.name}, YOUR MANDATORY ROLE IS: PRO <<<
+You MUST argue FOR the proposition.
+START your response with exactly: "Position: FOR"
+You are FORBIDDEN from arguing against or staying neutral."""
+                        elif role_type == "CON":
+                            role_instruction = f""">>> {agent.name}, YOUR MANDATORY ROLE IS: CON <<<
+You MUST argue AGAINST the proposition.
+START your response with exactly: "Position: AGAINST"
+You are FORBIDDEN from arguing for or staying neutral."""
+                        elif role_type == "DEVIL_ADVOCATE":
+                            role_instruction = f""">>> {agent.name}, YOU ARE THE DEVIL'S ADVOCATE - YOU MUST NOT TAKE A SIDE <<<
+YOU ARE FORBIDDEN FROM: Starting with "Position: FOR" or "Position: AGAINST"
+YOU MUST START WITH: "As Devil's Advocate, I will critique both sides without taking a position."
+YOUR JOB: Criticize BOTH the PRO and CON arguments - find flaws in EVERYONE's reasoning.
+YOU DO NOT HAVE AN OPINION. YOU ARE A CRITIC, NOT A PARTICIPANT.
+If you take a FOR or AGAINST position, you have FAILED."""
+                        else:
+                            role_instruction = None
+
+                        if role_instruction:
+                            self.groupchat.messages.append({
+                                "role": "system",
+                                "content": role_instruction,
+                                "name": f"RoleInstruction_{agent.name}"
+                            })
+                            logger.info(f"Injected role instruction for {agent.name}: {role_type}")
+
                     # Inject score feedback for this panelist (Phase 4: Score Feedback)
                     # Only for rounds > 0 when we have scores
                     if round_number > 0 and self.scoring_enabled:
@@ -701,6 +808,13 @@ REMINDER:
                         messages=self.groupchat.messages,
                         sender=self.manager,
                     )
+
+                    # Clean up the role instruction message after response
+                    if role_type and is_first_round:
+                        self.groupchat.messages = [
+                            msg for msg in self.groupchat.messages
+                            if msg.get("name") != f"RoleInstruction_{agent.name}"
+                        ]
 
                     # Handle different reply formats from different providers
                     # Some providers return strings, others return dicts
