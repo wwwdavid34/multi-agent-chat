@@ -725,7 +725,7 @@ export default function App() {
   const [scrollContainerWidth, setScrollContainerWidth] = useState<number>(0);
 
   // Authentication and thread migration
-  const { isAuthenticated, isLoading: authLoading, migrateThreads } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, accessToken, migrateThreads, fetchThreads } = useAuth();
 
   // Measure scroll container width for carousel full-width expansion
   useEffect(() => {
@@ -740,28 +740,35 @@ export default function App() {
   }, []);
 
   // Migrate localStorage threads to user account on first login
+  // This only runs ONCE per user (when threads_migrated flag is not set)
   useEffect(() => {
-    if (isAuthenticated && threads.length > 0) {
-      // Check if we need to migrate threads
+    if (isAuthenticated && accessToken && threads.length > 0) {
+      // Check if we need to migrate threads (only on FIRST ever login)
       const hasMigrated = localStorage.getItem("threads_migrated");
 
       if (!hasMigrated) {
+        // Only migrate if we have threads beyond just the demo thread
+        const threadsToMigrate = threads.filter(t => t !== DEFAULT_THREAD_ID);
+        console.log(`[Thread Migration] Checking migration: ${threads.length} threads, ${threadsToMigrate.length} non-demo`);
+
         // Migrate all localStorage threads to user account
         migrateThreads(threads, {
           timestamp: new Date().toISOString(),
           source: "localStorage",
         })
           .then(() => {
-            console.log(`Migrated ${threads.length} threads to user account`);
+            console.log(`[Thread Migration] Migrated ${threads.length} threads to user account`);
             localStorage.setItem("threads_migrated", "true");
           })
           .catch((err) => {
-            console.error("Thread migration failed:", err);
+            console.error("[Thread Migration] Thread migration failed:", err);
             // Don't block the app if migration fails
           });
+      } else {
+        console.log("[Thread Migration] Already migrated, skipping");
       }
     }
-  }, [isAuthenticated, threads, migrateThreads]);
+  }, [isAuthenticated, accessToken, threads, migrateThreads]);
 
   const messages = conversations[threadId] ?? [];
 
@@ -810,13 +817,81 @@ export default function App() {
     localStorage.setItem("threadId", threadId);
   }, [threadId]);
 
+  // Only persist threads/conversations for authenticated users
   useEffect(() => {
-    localStorage.setItem("threads", JSON.stringify(threads));
-  }, [threads]);
+    if (isAuthenticated) {
+      localStorage.setItem("threads", JSON.stringify(threads));
+    }
+  }, [threads, isAuthenticated]);
+
+  // Sync threads to server whenever they change (for authenticated users)
+  // This ensures new threads created after initial migration are persisted
+  useEffect(() => {
+    if (isAuthenticated && accessToken && threads.length > 0) {
+      // Only sync after initial migration is done
+      const hasMigrated = localStorage.getItem("threads_migrated");
+      if (hasMigrated) {
+        // Sync all threads to server (server will skip existing ones)
+        migrateThreads(threads, {
+          timestamp: new Date().toISOString(),
+          source: "sync",
+        }).catch((err) => {
+          // Silent fail - don't break the app for sync failures
+          console.debug("[Thread Sync] Background sync failed:", err);
+        });
+      }
+    }
+  }, [isAuthenticated, accessToken, threads, migrateThreads]);
 
   useEffect(() => {
-    localStorage.setItem("conversations", JSON.stringify(conversations));
-  }, [conversations]);
+    if (isAuthenticated) {
+      localStorage.setItem("conversations", JSON.stringify(conversations));
+    }
+  }, [conversations, isAuthenticated]);
+
+  // Clear conversations for guests - strict isolation
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      // Guest mode: start with clean slate
+      setThreadId(DEFAULT_THREAD_ID);
+      setThreads([DEFAULT_THREAD_ID]);
+      setConversations({ [DEFAULT_THREAD_ID]: [] });
+    }
+  }, [isAuthenticated, authLoading]);
+
+  // Restore threads from server after login
+  useEffect(() => {
+    const restoreThreads = async () => {
+      // Wait for auth to be fully ready (not loading AND authenticated AND have token)
+      if (!authLoading && isAuthenticated && accessToken) {
+        console.log("[Thread Restore] Starting thread restoration from server...");
+        try {
+          const serverThreads = await fetchThreads();
+          console.log(`[Thread Restore] Server returned ${serverThreads.length} threads:`,
+            serverThreads.map(t => t.thread_id));
+
+          if (serverThreads.length > 0) {
+            const threadIds = serverThreads.map((t) => t.thread_id);
+            // Ensure demo-thread is included if not present
+            if (!threadIds.includes(DEFAULT_THREAD_ID)) {
+              threadIds.unshift(DEFAULT_THREAD_ID);
+            }
+            setThreads(threadIds);
+            // Set current thread to most recent if current thread not in list
+            if (!threadIds.includes(threadId)) {
+              setThreadId(threadIds[0]);
+            }
+            console.log(`[Thread Restore] Successfully restored ${serverThreads.length} threads`);
+          } else {
+            console.log("[Thread Restore] No threads found on server, keeping defaults");
+          }
+        } catch (err) {
+          console.error("[Thread Restore] Failed to restore threads:", err);
+        }
+      }
+    };
+    restoreThreads();
+  }, [isAuthenticated, authLoading, accessToken, fetchThreads]);
 
   useEffect(() => {
     localStorage.setItem("panelists", JSON.stringify(panelists));
@@ -2379,9 +2454,14 @@ export default function App() {
                     )}
                   </div>
                   {/* Human-in-the-loop guidance for supervised/participatory modes */}
-                  {activeEntry?.debate_mode && activeEntry.debate_mode !== "autonomous" && (
+                  {activeEntry?.debate_mode === "supervised" && (
                     <div className="mt-2 text-xs text-muted-foreground bg-accent/5 border border-accent/20 rounded-lg px-3 py-2">
-                      <span className="font-medium text-accent">You can participate!</span> After this round completes, you'll be able to add your input, @mention panelists, or vote on arguments before continuing.
+                      <span className="font-medium text-accent">Supervised mode</span> — Review the debate and continue to the next round when ready.
+                    </div>
+                  )}
+                  {activeEntry?.debate_mode === "participatory" && (
+                    <div className="mt-2 text-xs text-muted-foreground bg-accent/5 border border-accent/20 rounded-lg px-3 py-2">
+                      <span className="font-medium text-accent">You can participate!</span> After this round completes, add your input or @mention panelists to guide the discussion.
                     </div>
                   )}
                   {/* Live Stance Indicator during debate */}
@@ -2391,7 +2471,6 @@ export default function App() {
                         const stanceColors: Record<string, string> = {
                           FOR: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30",
                           AGAINST: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30",
-                          CONDITIONAL: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
                           NEUTRAL: "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30",
                         };
                         const roleLabel = assignedRoles[name] ? ` [${assignedRoles[name]}]` : "";

@@ -36,6 +36,13 @@ export interface JWTPayload {
   iat: number;
 }
 
+export interface ThreadInfo {
+  thread_id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AuthContextType {
   // State
   user: User | null;
@@ -52,8 +59,9 @@ export interface AuthContextType {
   saveApiKeys: (keys: Record<string, string>) => Promise<void>;
   getApiKeys: () => Promise<Record<string, string>>;
 
-  // Thread migration
+  // Thread management
   migrateThreads: (threadIds: string[], metadata?: any) => Promise<void>;
+  fetchThreads: () => Promise<ThreadInfo[]>;
 }
 
 // ============================================================================
@@ -180,7 +188,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setAccessToken(null);
     setError(null);
     localStorage.removeItem("auth_token");
-    console.log("User logged out");
+    // Clear user-specific data to prevent data bleeding to guests
+    localStorage.removeItem("threads");
+    localStorage.removeItem("conversations");
+    localStorage.removeItem("threadId");
+    // NOTE: Keep threads_migrated flag - threads are already on server
+    // When user logs back in, they'll be restored from server, not re-migrated
+    console.log("User logged out, cleared user data");
   };
 
   // =========================================================================
@@ -270,6 +284,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   // =========================================================================
+  // Fetch user's threads from server
+  // =========================================================================
+
+  const fetchThreads = async (): Promise<ThreadInfo[]> => {
+    if (!accessToken) {
+      throw new Error("Not authenticated");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/auth/threads`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Failed to fetch threads");
+    }
+
+    const data = await response.json();
+    return data.threads;
+  };
+
+  // =========================================================================
   // Context value
   // =========================================================================
 
@@ -284,6 +322,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     saveApiKeys,
     getApiKeys,
     migrateThreads,
+    fetchThreads,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

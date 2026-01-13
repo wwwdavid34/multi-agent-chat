@@ -16,7 +16,7 @@ DebateMode = Literal["autonomous", "supervised", "participatory"]
 class StanceData(TypedDict, total=False):
     """Structured stance information extracted from panelist response."""
     panelist_name: str
-    stance: str  # 'FOR', 'AGAINST', 'CONDITIONAL', 'NEUTRAL'
+    stance: str  # 'FOR', 'AGAINST', 'NEUTRAL'
     core_claim: str
     confidence: float  # 0.0-1.0
     changed_from_previous: bool
@@ -80,9 +80,15 @@ class DebateRound(TypedDict, total=False):
 
 
 class AssignedRole(TypedDict, total=False):
-    """Explicit role assignment for a panelist in adversarial debates."""
+    """Explicit role assignment for a panelist in adversarial debates.
+
+    Roles:
+    - PRO: Must argue FOR the proposition
+    - CON: Must argue AGAINST the proposition
+    - DEVIL_ADVOCATE: Neutral critic who challenges BOTH sides equally
+    """
     panelist_name: str
-    role: Literal["PRO", "CON", "DEVIL_ADVOCATE", "NEUTRAL"]
+    role: Literal["PRO", "CON", "DEVIL_ADVOCATE"]
     position_statement: str  # What they must argue for
     constraints: List[str]  # What they must/must not do
 

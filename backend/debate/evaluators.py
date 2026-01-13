@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 class StanceExtractor:
     """Extract structured stance from panelist responses.
-    
+
     Uses cheap GPT-4o-mini to parse:
-    - Position (FOR/AGAINST/CONDITIONAL/NEUTRAL)
+    - Position (FOR/AGAINST/NEUTRAL)
     - Core claim
     - Confidence level
     """
@@ -37,12 +37,15 @@ Panelist: {panelist_name}
 Response: {response}
 
 Extract:
-1. STANCE: Must be exactly one of: FOR, AGAINST, CONDITIONAL, NEUTRAL
+1. STANCE: Must be exactly one of: FOR, AGAINST, NEUTRAL
+   - FOR: Supports the proposition
+   - AGAINST: Opposes the proposition
+   - NEUTRAL: Does not take a side (e.g., Devil's Advocate critiquing both sides)
 2. CORE_CLAIM: A single sentence summarizing their main position
 3. CONFIDENCE: A number 0.0-1.0 indicating confidence in their stance
 
 Respond in JSON format:
-{{"stance": "FOR|AGAINST|CONDITIONAL|NEUTRAL", "core_claim": "...", "confidence": 0.0-1.0}}"""
+{{"stance": "FOR|AGAINST|NEUTRAL", "core_claim": "...", "confidence": 0.0-1.0}}"""
 
     def __init__(self):
         """Initialize stance extractor with GPT-4o-mini."""
@@ -117,7 +120,7 @@ Respond in JSON format:
             stance_data = json.loads(last_message)
             
             # Validate stance
-            valid_stances = {"FOR", "AGAINST", "CONDITIONAL", "NEUTRAL"}
+            valid_stances = {"FOR", "AGAINST", "NEUTRAL"}
             if stance_data.get("stance") not in valid_stances:
                 logger.warning(f"Invalid stance '{stance_data.get('stance')}', defaulting to NEUTRAL")
                 stance_data["stance"] = "NEUTRAL"

@@ -1,14 +1,14 @@
 /**
  * StanceIndicator - Display panelist stances at a glance
  *
- * Shows each panelist's current position (FOR/AGAINST/NEUTRAL/CONDITIONAL)
+ * Shows each panelist's current position (FOR/AGAINST/NEUTRAL)
  * with confidence levels and change indicators.
  */
 
 import React from "react";
 
 interface StanceData {
-  stance: string; // 'FOR', 'AGAINST', 'CONDITIONAL', 'NEUTRAL'
+  stance: string; // 'FOR', 'AGAINST', 'NEUTRAL'
   confidence: number; // 0.0-1.0
   changed_from_previous?: boolean;
   core_claim?: string;
@@ -30,11 +30,6 @@ const stanceColors: Record<string, { bg: string; text: string; border: string }>
     text: "text-red-600 dark:text-red-400",
     border: "border-red-500/30",
   },
-  CONDITIONAL: {
-    bg: "bg-yellow-500/10",
-    text: "text-yellow-600 dark:text-yellow-400",
-    border: "border-yellow-500/30",
-  },
   NEUTRAL: {
     bg: "bg-gray-500/10",
     text: "text-gray-600 dark:text-gray-400",
@@ -45,7 +40,6 @@ const stanceColors: Record<string, { bg: string; text: string; border: string }>
 const stanceIcons: Record<string, string> = {
   FOR: "👍",
   AGAINST: "👎",
-  CONDITIONAL: "⚖️",
   NEUTRAL: "🤔",
 };
 

@@ -131,7 +131,7 @@ class PostgresDebateStorage:
                     thread_id TEXT NOT NULL,
                     round_number INT NOT NULL,
                     panelist_name TEXT NOT NULL,
-                    stance TEXT NOT NULL,  -- 'FOR', 'AGAINST', 'CONDITIONAL', 'NEUTRAL'
+                    stance TEXT NOT NULL,  -- 'FOR', 'AGAINST', 'NEUTRAL'
                     core_claim TEXT NOT NULL,
                     confidence FLOAT NOT NULL,  -- 0.0-1.0
                     changed_from_previous BOOLEAN DEFAULT FALSE,
@@ -319,7 +319,7 @@ class PostgresDebateStorage:
             thread_id: Thread identifier
             round_number: Debate round number
             panelist_name: Name of panelist
-            stance: Position ('FOR', 'AGAINST', 'CONDITIONAL', 'NEUTRAL')
+            stance: Position ('FOR', 'AGAINST', 'NEUTRAL')
             core_claim: Main claim/position statement
             confidence: Confidence score 0.0-1.0
             changed_from_previous: Whether stance changed from previous round

@@ -902,20 +902,21 @@ If you take a FOR or AGAINST position, you have FAILED."""
             user_message=user_message,  # Include user's message in round data
         )
 
-        # Emit debate round event
-        await self._emit_event("debate_round", round=round_data)
-
-        # Update state
+        # Update state BEFORE quality evaluation
         if "debate_history" not in self.state:
             self.state["debate_history"] = []
         self.state["debate_history"].append(round_data)
-        
+
         # Update panel_responses in state so they're included in result event
         self.state["panel_responses"] = responses
-        
-        # Run quality evaluation if enabled
+
+        # Run quality evaluation BEFORE emitting event
+        # This ensures stances are populated in round_data for the frontend
         if self.evaluators_enabled and self.storage:
             await self._evaluate_round_quality(round_number, responses)
+
+        # Emit debate round event WITH stances populated
+        await self._emit_event("debate_round", round=round_data)
 
         return round_data
     

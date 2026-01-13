@@ -267,7 +267,6 @@ export function DebateViewer({
                           const styles: Record<string, string> = {
                             'FOR': 'bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30',
                             'AGAINST': 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
-                            'CONDITIONAL': 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
                             'NEUTRAL': 'bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/30',
                           };
                           return styles[stance] || styles['NEUTRAL'];
