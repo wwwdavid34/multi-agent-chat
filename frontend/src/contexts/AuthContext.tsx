@@ -27,6 +27,14 @@ export interface User {
   email: string;
   name: string | null;
   picture_url: string | null;
+  role: "user" | "admin";
+}
+
+export interface SystemKeyStatus {
+  openai: boolean;
+  anthropic: boolean;
+  google: boolean;
+  xai: boolean;
 }
 
 export interface JWTPayload {
@@ -50,6 +58,8 @@ export interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  systemKeyStatus: SystemKeyStatus | null;
+  isAdmin: boolean;
 
   // Auth methods
   login: (googleToken: string) => Promise<void>;
@@ -58,6 +68,7 @@ export interface AuthContextType {
   // API key management
   saveApiKeys: (keys: Record<string, string>) => Promise<void>;
   getApiKeys: () => Promise<Record<string, string>>;
+  fetchSystemKeyStatus: () => Promise<SystemKeyStatus>;
 
   // Thread management
   migrateThreads: (threadIds: string[], metadata?: any) => Promise<void>;
@@ -83,6 +94,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [systemKeyStatus, setSystemKeyStatus] = useState<SystemKeyStatus | null>(null);
 
   // =========================================================================
   // Initialize auth state from localStorage
@@ -119,6 +131,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
           if (response.ok) {
             const userData = await response.json();
             setUser(userData);
+
+            // Fetch system key status
+            try {
+              const statusResponse = await fetch(`${API_BASE_URL}/auth/system-key-status`, {
+                headers: {
+                  Authorization: `Bearer ${storedToken}`,
+                },
+              });
+              if (statusResponse.ok) {
+                const status = await statusResponse.json();
+                setSystemKeyStatus(status);
+              }
+            } catch (err) {
+              console.warn("Could not fetch system key status:", err);
+            }
           } else {
             // Token is invalid on backend - clear everything
             localStorage.removeItem("auth_token");
@@ -168,7 +195,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setUser(data.user);
       localStorage.setItem("auth_token", data.access_token);
 
-      console.log(`User logged in: ${data.user.email}`);
+      // Fetch system key status for the user
+      try {
+        const statusResponse = await fetch(`${API_BASE_URL}/auth/system-key-status`, {
+          headers: {
+            Authorization: `Bearer ${data.access_token}`,
+          },
+        });
+        if (statusResponse.ok) {
+          const status = await statusResponse.json();
+          setSystemKeyStatus(status);
+        }
+      } catch (err) {
+        console.warn("Could not fetch system key status:", err);
+      }
+
+      console.log(`User logged in: ${data.user.email} (role: ${data.user.role})`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Login failed";
       setError(message);
@@ -187,6 +229,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setUser(null);
     setAccessToken(null);
     setError(null);
+    setSystemKeyStatus(null);
     localStorage.removeItem("auth_token");
     // Clear user-specific data to prevent data bleeding to guests
     localStorage.removeItem("threads");
@@ -245,6 +288,31 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const data = await response.json();
     return data.keys;
+  };
+
+  // =========================================================================
+  // Fetch system key status (which providers user is allowlisted for)
+  // =========================================================================
+
+  const fetchSystemKeyStatus = async (): Promise<SystemKeyStatus> => {
+    if (!accessToken) {
+      throw new Error("Not authenticated");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/auth/system-key-status`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Failed to fetch system key status");
+    }
+
+    const status = await response.json();
+    setSystemKeyStatus(status);
+    return status;
   };
 
   // =========================================================================
@@ -317,10 +385,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAuthenticated: !!user && !!accessToken,
     isLoading,
     error,
+    systemKeyStatus,
+    isAdmin: user?.role === "admin",
     login,
     logout,
     saveApiKeys,
     getApiKeys,
+    fetchSystemKeyStatus,
     migrateThreads,
     fetchThreads,
   };

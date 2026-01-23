@@ -34,6 +34,7 @@ interface DebateViewerProps {
   user_as_participant?: boolean;
   scores?: Record<string, ScoreData>;
   onVote?: (panelistName: string, roundNumber: number, voteType: "compelling" | "weak") => void;
+  userVotes?: Record<string, "compelling" | "weak">; // key: `${panelistName}-${roundNumber}`
 }
 
 export function DebateViewer({
@@ -47,6 +48,7 @@ export function DebateViewer({
   user_as_participant = false,
   scores,
   onVote,
+  userVotes = {},
 }: DebateViewerProps) {
   const [expandedRounds, setExpandedRounds] = useState<Set<number>>(() => {
     // Auto-expand the first round initially
@@ -339,6 +341,48 @@ export function DebateViewer({
                                 <Markdown content={response} />
                               </div>
                             )}
+
+                            {/* Vote buttons - shown in supervised mode */}
+                            {stepReview && onVote && !isWatching && (() => {
+                              const voteKey = `${name}-${round.round_number}`;
+                              const existingVote = userVotes[voteKey];
+
+                              return (
+                                <div className="mt-3 pt-2 border-t border-border/20 flex items-center gap-2">
+                                  <span className="text-[10px] text-muted-foreground mr-1">Vote:</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => onVote(name, round.round_number, "compelling")}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                                      existingVote === "compelling"
+                                        ? "bg-green-500/30 text-green-600 dark:text-green-400 ring-1 ring-green-500/50"
+                                        : "bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20"
+                                    }`}
+                                    title={existingVote === "compelling" ? "Click to remove vote" : "This argument was compelling"}
+                                  >
+                                    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="currentColor">
+                                      <path d="M2 20h2c.55 0 1-.45 1-1v-9c0-.55-.45-1-1-1H2v11zm19.83-7.12c.11-.25.17-.52.17-.8V11c0-1.1-.9-2-2-2h-5.5l.92-4.65c.05-.22.02-.46-.08-.66-.23-.45-.52-.86-.88-1.22L14 2 7.59 8.41C7.21 8.79 7 9.3 7 9.83v7.84C7 18.95 8.05 20 9.34 20h8.11c.7 0 1.36-.37 1.72-.97l2.66-6.15z"/>
+                                    </svg>
+                                    Compelling
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => onVote(name, round.round_number, "weak")}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                                      existingVote === "weak"
+                                        ? "bg-red-500/30 text-red-600 dark:text-red-400 ring-1 ring-red-500/50"
+                                        : "bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+                                    }`}
+                                    title={existingVote === "weak" ? "Click to remove vote" : "This argument was weak"}
+                                  >
+                                    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="currentColor">
+                                      <path d="M22 4h-2c-.55 0-1 .45-1 1v9c0 .55.45 1 1 1h2V4zM2.17 11.12c-.11.25-.17.52-.17.8V13c0 1.1.9 2 2 2h5.5l-.92 4.65c-.05.22-.02.46.08.66.23.45.52.86.88 1.22L10 22l6.41-6.41c.38-.38.59-.89.59-1.42V6.34C17 5.05 15.95 4 14.66 4h-8.1c-.71 0-1.36.37-1.72.97l-2.67 6.15z"/>
+                                    </svg>
+                                    Weak
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })}

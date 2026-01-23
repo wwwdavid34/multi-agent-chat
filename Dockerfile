@@ -27,6 +27,10 @@ RUN apt-get update && apt-get install -y \
 # Copy backend files
 COPY backend/pyproject.toml ./
 COPY backend/*.py ./
+COPY backend/auth/ ./auth/
+COPY backend/routers/ ./routers/
+COPY backend/debate/ ./debate/
+COPY backend/migrations/ ./migrations/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e .
@@ -34,11 +38,12 @@ RUN pip install --no-cache-dir -e .
 # Copy built frontend from frontend-builder stage
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
-# Expose port
-EXPOSE 8000
+# Expose port (Cloud Run uses PORT env var)
+EXPOSE 8080
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
 
-# Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application (uses PORT env var for Cloud Run compatibility)
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT}

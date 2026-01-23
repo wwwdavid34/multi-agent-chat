@@ -4,19 +4,24 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from auth.dependencies import get_current_user_optional
+from auth.models import TokenPayload
+from auth.provider_keys import resolve_provider_keys
+from routers.auth import get_db
+
 from panel_graph import panel_graph, get_storage_mode
-from provider_clients import ProviderName, fetch_provider_models
+from provider_clients import ProviderName, fetch_provider_models, check_provider_quota, QuotaStatus
 from config import get_debate_engine, get_pg_conn_str, use_in_memory_checkpointer, get_frontend_url, is_auth_enabled
-from routers import auth
+from routers import auth, admin, conversations
 
 # Initialize logger early so it's available in all functions
 logger = logging.getLogger(__name__)
@@ -55,9 +60,21 @@ async def get_ag2_service():
 # Configure CORS
 # Note: In production, restrict to specific origins for security
 frontend_url = get_frontend_url()
+# Parse frontend_url which may contain comma-separated origins
+cors_origins = [url.strip() for url in frontend_url.split(",") if url.strip()]
+# Add common Cloudflare Pages patterns
+cors_origins.extend([
+    "https://multi-agent-chat.pages.dev",
+    "http://localhost:5173",
+    "http://localhost:3000",
+])
+# Remove duplicates while preserving order
+cors_origins = list(dict.fromkeys(cors_origins))
+logger.info(f"CORS allowed origins: {cors_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_url, "*"],  # TODO: Remove "*" in production
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,6 +82,12 @@ app.add_middleware(
 
 # Include authentication router
 app.include_router(auth.router)
+
+# Include admin router
+app.include_router(admin.router)
+
+# Include conversations router
+app.include_router(conversations.router)
 
 
 @app.on_event("startup")
@@ -125,7 +148,9 @@ class AskRequest(BaseModel):
     user_message: str | None = None  # User's message to inject (participatory mode)
     exit_debate: bool | None = False  # User wants to end the debate early
     # Adversarial role assignment
-    stance_mode: str | None = "free"  # "free", "adversarial", or "assigned"
+    # NOTE: Default is None so the debate service can pick a sensible default
+    # (e.g., "adversarial" for debates, "free" for panel-only).
+    stance_mode: str | None = None  # "free", "adversarial", or "assigned"
     assigned_roles: dict[str, dict] | None = None  # panelist_name -> role assignment
 
 
@@ -170,7 +195,32 @@ async def health_check():
 
 
 @app.post("/ask", response_model=AskResponse)
-async def ask(req: AskRequest) -> AskResponse:
+async def ask(
+    req: AskRequest,
+    user: Optional[TokenPayload] = Depends(get_current_user_optional),
+    pool = Depends(get_db),
+) -> AskResponse:
+    """Non-streaming endpoint for panel discussions.
+
+    Supports optional authentication for BYOK enforcement.
+    """
+    # Extract required providers from panelists
+    required_providers = set()
+    if req.panelists:
+        for p in req.panelists:
+            required_providers.add(p.provider.lower())
+
+    # Resolve provider keys with BYOK enforcement
+    try:
+        resolved_keys = await resolve_provider_keys(
+            request_keys=req.provider_keys,
+            user=user,
+            pool=pool,
+            required_providers=required_providers if required_providers else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     attachments = req.attachments or []
     attachment_md = "\n".join(
         f"![user attachment {idx + 1}]({url})" for idx, url in enumerate(attachments)
@@ -198,7 +248,7 @@ async def ask(req: AskRequest) -> AskResponse:
             "panelists": [panelist.model_dump() for panelist in req.panelists]
             if req.panelists
             else None,
-            "provider_keys": {k: v for k, v in (req.provider_keys or {}).items() if v},
+            "provider_keys": {k: v for k, v in resolved_keys.items() if v},
         }
     }
     result = await panel_graph.ainvoke(state, config=config)
@@ -211,8 +261,55 @@ async def ask(req: AskRequest) -> AskResponse:
 
 
 @app.post("/ask-stream")
-async def ask_stream(req: AskRequest, request: Request):
-    """Streaming endpoint that provides real-time status updates."""
+async def ask_stream(
+    req: AskRequest,
+    request: Request,
+    user: TokenPayload | None = Depends(get_current_user_optional),
+    pool = Depends(get_db),
+):
+    """Streaming endpoint that provides real-time status updates.
+
+    Supports optional authentication. When authenticated:
+    - User's stored keys are loaded
+    - System keys are available if user is allowlisted
+
+    When not authenticated:
+    - Only keys provided in request (BYOK) are used
+    """
+    # Extract required providers from panelists
+    required_providers = set()
+    if req.panelists:
+        for p in req.panelists:
+            required_providers.add(p.provider.lower())
+
+    # Resolve provider keys with BYOK enforcement
+    try:
+        resolved_keys = await resolve_provider_keys(
+            request_keys=req.provider_keys,
+            user=user,
+            pool=pool,
+            required_providers=required_providers if required_providers else None,
+        )
+        # Replace request keys with resolved keys
+        req.provider_keys = resolved_keys
+    except ValueError as e:
+        # Missing required keys - return error as SSE
+        # Capture error message before defining nested function (Python closure issue)
+        error_msg = str(e)
+        async def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return StreamingResponse(
+            error_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
+    # Log which key sources were used
+    if user:
+        logger.info(f"🔑 [AUTH] Authenticated user: {user.email}")
+    else:
+        logger.info("🔑 [AUTH] Anonymous request - using BYOK only")
 
     # Check feature flag for debate engine selection
     debate_engine = get_debate_engine()
@@ -264,7 +361,8 @@ async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
                         max_debate_rounds=req.max_debate_rounds or 3,
                         tagged_panelists=req.tagged_panelists or [],
                         # Adversarial role assignment
-                        stance_mode=req.stance_mode or "free",
+                        # Pass through None so backend can default to adversarial for debates.
+                        stance_mode=req.stance_mode,
                         assigned_roles=req.assigned_roles,
                     )
 
@@ -604,10 +702,35 @@ async def _handle_langgraph_debate(req: AskRequest) -> StreamingResponse:
 
 
 @app.post("/providers/{provider}/models", response_model=ProviderModelsResponse)
-async def get_provider_models(provider: ProviderName, payload: ProviderKeyRequest) -> ProviderModelsResponse:
-    api_key = payload.api_key.strip()
+async def get_provider_models(
+    provider: ProviderName,
+    payload: ProviderKeyRequest,
+    user: Optional[TokenPayload] = Depends(get_current_user_optional),
+    pool = Depends(get_db),
+) -> ProviderModelsResponse:
+    """Fetch available models for a provider.
+
+    If API key is provided, use it directly.
+    If user is authenticated and allowlisted, use system key automatically.
+    """
+    from auth.provider_keys import get_system_key, get_user_allowlisted_providers, CANONICAL_PROVIDERS
+
+    api_key = payload.api_key.strip() if payload.api_key else ""
+
+    # If no API key provided, check if user is allowlisted for system key
+    if not api_key and user and pool:
+        try:
+            allowlisted = await get_user_allowlisted_providers(user.email, pool)
+            canonical = CANONICAL_PROVIDERS.get(provider.value, provider.value)
+            if canonical in allowlisted:
+                api_key = get_system_key(canonical) or ""
+                if api_key:
+                    logger.info(f"Using system key for {provider.value} (user {user.email} allowlisted)")
+        except Exception as e:
+            logger.warning(f"Could not check allowlist: {e}")
+
     if not api_key:
-        raise HTTPException(status_code=400, detail="API key is required")
+        raise HTTPException(status_code=400, detail="API key is required. Sign in and get allowlisted for system keys, or provide your own.")
 
     try:
         models = await fetch_provider_models(provider, api_key)
@@ -621,19 +744,92 @@ async def get_provider_models(provider: ProviderName, payload: ProviderKeyReques
     return ProviderModelsResponse(models=payload_models)
 
 
+class QuotaCheckRequest(BaseModel):
+    """Request to check quota for multiple providers."""
+    providers: list[str]  # List of provider names to check
+
+
+class QuotaCheckResponse(BaseModel):
+    """Response with quota status for each provider."""
+    results: dict[str, QuotaStatus]
+
+
+@app.post("/providers/check-quota", response_model=QuotaCheckResponse)
+async def check_providers_quota(
+    request: QuotaCheckRequest,
+    user: Optional[TokenPayload] = Depends(get_current_user_optional),
+    pool = Depends(get_db),
+) -> QuotaCheckResponse:
+    """Check API quota availability for specified providers.
+
+    For each provider, makes a minimal API call to verify:
+    1. API key is valid
+    2. Quota/rate limits are not exhausted
+
+    Returns status for each provider indicating if it can be used.
+    """
+    from auth.provider_keys import get_system_key, get_user_allowlisted_providers, CANONICAL_PROVIDERS
+
+    results: dict[str, QuotaStatus] = {}
+
+    # Get user's allowlisted providers if authenticated
+    allowlisted: set[str] = set()
+    if user and pool:
+        try:
+            allowlisted = await get_user_allowlisted_providers(user.email, pool)
+        except Exception as e:
+            logger.warning(f"Could not check allowlist: {e}")
+
+    # Check each requested provider in parallel
+    async def check_single_provider(provider_name: str) -> tuple[str, QuotaStatus]:
+        try:
+            provider = ProviderName(provider_name)
+        except ValueError:
+            return (provider_name, {"available": False, "error": f"Unknown provider: {provider_name}", "provider": provider_name})
+
+        # Get API key - try system key if user is allowlisted
+        canonical = CANONICAL_PROVIDERS.get(provider_name, provider_name)
+        api_key = ""
+        if canonical in allowlisted:
+            api_key = get_system_key(canonical) or ""
+
+        if not api_key:
+            return (provider_name, {"available": False, "error": "No API key available", "provider": provider_name})
+
+        status = await check_provider_quota(provider, api_key)
+        return (provider_name, status)
+
+    # Run all checks in parallel
+    tasks = [check_single_provider(p) for p in request.providers]
+    check_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for result in check_results:
+        if isinstance(result, Exception):
+            logger.error(f"Quota check error: {result}")
+            continue
+        provider_name, status = result
+        results[provider_name] = status
+
+    return QuotaCheckResponse(results=results)
+
+
 @app.get("/initial-keys")
 async def get_initial_keys() -> dict[str, str]:
-    """Return API keys from environment variables for prefilling the UI.
+    """DEPRECATED: This endpoint exposes system keys and should not be used.
 
-    Keys are read from environment variables and returned to the frontend
-    to prefill the configuration panel. This allows users to configure
-    API keys via .env file instead of manually entering them.
+    For security, this now returns empty keys. Users should:
+    1. Sign in with Google OAuth
+    2. Add their own API keys (BYOK) via the settings panel
+    3. Admins can allowlist users to use system keys
+
+    This endpoint is kept for backwards compatibility but returns empty values.
     """
+    logger.warning("Deprecated /initial-keys endpoint called - returning empty keys")
     return {
-        "openai": os.getenv("OPENAI_API_KEY", ""),
-        "gemini": os.getenv("GEMINI_API_KEY", ""),
-        "claude": os.getenv("CLAUDE_API_KEY", ""),
-        "grok": os.getenv("GROK_API_KEY", ""),
+        "openai": "",
+        "gemini": "",
+        "claude": "",
+        "grok": "",
     }
 
 

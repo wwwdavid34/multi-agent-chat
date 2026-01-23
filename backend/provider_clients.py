@@ -1,10 +1,13 @@
 """Helpers for retrieving available models from external providers."""
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import Any, List, TypedDict
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderName(str, Enum):
@@ -12,6 +15,12 @@ class ProviderName(str, Enum):
     GEMINI = "gemini"
     CLAUDE = "claude"
     GROK = "grok"
+
+
+class QuotaStatus(TypedDict):
+    available: bool
+    error: str | None
+    provider: str
 
 
 class ModelInfo(TypedDict):
@@ -137,3 +146,163 @@ def _extract_error_message(payload: Any) -> str | None:
         if isinstance(message, str):
             return message
     return None
+
+
+# ============================================================================
+# Quota / Rate Limit Checking
+# ============================================================================
+
+
+async def check_provider_quota(provider: ProviderName, api_key: str) -> QuotaStatus:
+    """Check if a provider's API key has available quota.
+
+    Makes a minimal API call to verify the key works and quota is available.
+    Returns status indicating if the provider can be used.
+    """
+    api_key = api_key.strip()
+    if not api_key:
+        return {"available": False, "error": "No API key provided", "provider": provider.value}
+
+    try:
+        if provider is ProviderName.OPENAI:
+            return await _check_openai_quota(api_key)
+        if provider is ProviderName.GEMINI:
+            return await _check_gemini_quota(api_key)
+        if provider is ProviderName.CLAUDE:
+            return await _check_claude_quota(api_key)
+        if provider is ProviderName.GROK:
+            return await _check_grok_quota(api_key)
+        return {"available": False, "error": f"Unknown provider: {provider}", "provider": provider.value}
+    except Exception as e:
+        logger.warning(f"Quota check failed for {provider.value}: {e}")
+        return {"available": False, "error": str(e), "provider": provider.value}
+
+
+async def _check_openai_quota(api_key: str) -> QuotaStatus:
+    """Check OpenAI quota by making a minimal completion request."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    # Use a minimal completion to check quota (1 token max)
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+
+    if response.is_success:
+        return {"available": True, "error": None, "provider": "openai"}
+
+    error = _extract_quota_error(response, "openai")
+    return {"available": False, "error": error, "provider": "openai"}
+
+
+async def _check_gemini_quota(api_key: str) -> QuotaStatus:
+    """Check Gemini quota by making a minimal generation request."""
+    params = {"key": api_key}
+    payload = {
+        "contents": [{"parts": [{"text": "hi"}]}],
+        "generationConfig": {"maxOutputTokens": 1},
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent",
+            params=params,
+            json=payload,
+        )
+
+    if response.is_success:
+        return {"available": True, "error": None, "provider": "gemini"}
+
+    error = _extract_quota_error(response, "gemini")
+    return {"available": False, "error": error, "provider": "gemini"}
+
+
+async def _check_claude_quota(api_key: str) -> QuotaStatus:
+    """Check Claude quota by making a minimal message request."""
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "claude-3-haiku-20240307",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=payload,
+        )
+
+    if response.is_success:
+        return {"available": True, "error": None, "provider": "claude"}
+
+    error = _extract_quota_error(response, "claude")
+    return {"available": False, "error": error, "provider": "claude"}
+
+
+async def _check_grok_quota(api_key: str) -> QuotaStatus:
+    """Check Grok quota by making a minimal completion request."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "grok-2-latest",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+
+    if response.is_success:
+        return {"available": True, "error": None, "provider": "grok"}
+
+    error = _extract_quota_error(response, "grok")
+    return {"available": False, "error": error, "provider": "grok"}
+
+
+def _extract_quota_error(response: httpx.Response, provider: str) -> str:
+    """Extract a human-readable error message from API response."""
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+
+    status = response.status_code
+
+    # Common quota/rate limit status codes
+    if status == 429:
+        msg = _extract_error_message(data) or "Rate limit exceeded"
+        return f"Quota exhausted: {msg}"
+    if status == 402:
+        return "Payment required - billing issue or quota exhausted"
+    if status == 401:
+        return "Invalid API key"
+    if status == 403:
+        return "Access denied - check API key permissions"
+
+    # Try to extract specific error message
+    msg = _extract_error_message(data)
+    if msg:
+        # Check for quota-related keywords
+        lower_msg = msg.lower()
+        if any(kw in lower_msg for kw in ["quota", "limit", "exceeded", "billing", "insufficient"]):
+            return f"Quota issue: {msg}"
+        return msg
+
+    return f"API error (HTTP {status})"

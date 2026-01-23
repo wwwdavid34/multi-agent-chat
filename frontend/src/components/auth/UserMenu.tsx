@@ -6,17 +6,18 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { useAuth } from "../../hooks/useAuth";
-import { LogOut, User, Settings, Upload, Moon, Sun } from "lucide-react";
+import { LogOut, User, Settings, Upload, Moon, Sun, Shield } from "lucide-react";
 import { GoogleLoginButton } from "./GoogleLoginButton";
 import { useTheme } from "../theme-provider";
 
 interface UserMenuProps {
   onOpenSettings?: () => void;
   onImportThread?: () => void;
+  onOpenAdmin?: () => void;
 }
 
-export function UserMenu({ onOpenSettings, onImportThread }: UserMenuProps) {
-  const { user, isAuthenticated, logout } = useAuth();
+export function UserMenu({ onOpenSettings, onImportThread, onOpenAdmin }: UserMenuProps) {
+  const { user, isAuthenticated, logout, isAdmin } = useAuth();
   const { theme, setTheme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -204,6 +205,20 @@ export function UserMenu({ onOpenSettings, onImportThread }: UserMenuProps) {
               >
                 <Upload className="w-4 h-4 text-muted-foreground" />
                 Import Thread
+              </button>
+            )}
+
+            {/* Admin Panel - only for admins */}
+            {isAdmin && onOpenAdmin && (
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenAdmin();
+                }}
+                className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-muted/60 flex items-center gap-3"
+              >
+                <Shield className="w-4 h-4 text-muted-foreground" />
+                Admin Panel
               </button>
             )}
 

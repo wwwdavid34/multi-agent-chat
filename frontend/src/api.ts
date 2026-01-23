@@ -1,6 +1,49 @@
-import type { AskRequestBody, AskResponse, DebateRound, StanceData } from "./types";
+import type { AskRequestBody, AskResponse, DebateRound, StanceData, TokenUsage, PanelistConfigPayload } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:8000`;
+
+// ============================================================================
+// Conversation Message Types (for server-side persistence)
+// ============================================================================
+
+export interface MessageEntry {
+  id: string;
+  question: string;
+  attachments: string[];
+  summary: string | null;
+  panel_responses: Record<string, string>;
+  panelists: PanelistConfigPayload[];
+  debate_history?: DebateRound[] | null;
+  debate_mode?: string | null;
+  max_debate_rounds?: number | null;
+  debate_paused?: boolean;
+  stopped?: boolean;
+  usage?: TokenUsage | null;
+  tagged_panelists?: string[] | null;
+}
+
+export interface ConversationResponse {
+  thread_id: string;
+  messages: MessageEntry[];
+}
+
+export interface AllConversationsResponse {
+  conversations: Record<string, MessageEntry[]>;
+}
+
+// ============================================================================
+// Quota Check Types
+// ============================================================================
+
+export interface QuotaStatus {
+  available: boolean;
+  error: string | null;
+  provider: string;
+}
+
+export interface QuotaCheckResponse {
+  results: Record<string, QuotaStatus>;
+}
 
 /**
  * Get authentication headers including JWT token if available
@@ -57,6 +100,8 @@ export async function askPanelStream(
   },
   signal?: AbortSignal
 ): Promise<void> {
+  console.log("[SSE] Starting askPanelStream request...");
+
   const res = await fetch(`${API_BASE_URL}/ask-stream`, {
     method: "POST",
     headers: getAuthHeaders(),
@@ -64,24 +109,34 @@ export async function askPanelStream(
     signal,
   });
 
+  console.log("[SSE] Fetch response received:", { ok: res.ok, status: res.status, statusText: res.statusText });
+
   if (!res.ok) {
     const message = await res.text();
+    console.error("[SSE] Response not OK:", message);
     throw new Error(message || "Request failed");
   }
 
   const reader = res.body?.getReader();
   if (!reader) {
+    console.error("[SSE] Response body not readable");
     throw new Error("Response body is not readable");
   }
 
+  console.log("[SSE] Reader obtained, starting to read stream...");
+
   const decoder = new TextDecoder();
   let buffer = "";
+  let eventCount = 0;
 
   try {
     while (true) {
       const { done, value } = await reader.read();
 
-      if (done) break;
+      if (done) {
+        console.log("[SSE] Stream ended (done=true) after", eventCount, "events");
+        break;
+      }
 
       // Decode the chunk and add to buffer
       buffer += decoder.decode(value, { stream: true });
@@ -96,6 +151,8 @@ export async function askPanelStream(
 
           try {
             const event = JSON.parse(data);
+            eventCount++;
+            console.log("[SSE] Event received:", { type: event.type, eventCount, message: event.message || event.panelist || "" });
 
             if (event.type === "status" && callbacks.onStatus) {
               callbacks.onStatus(event.message);
@@ -134,21 +191,24 @@ export async function askPanelStream(
                 usage: event.usage,
               });
             } else if (event.type === "error" && callbacks.onError) {
+              console.error("[SSE] Error event from server:", event.message);
               callbacks.onError(new Error(event.message));
             } else if (event.type === "done") {
               // Stream complete
+              console.log("[SSE] Done event received, stream complete after", eventCount, "events");
               return;
             }
           } catch (e) {
-            console.error("Failed to parse SSE event:", data, e);
+            console.error("[SSE] Failed to parse SSE event:", data, e);
           }
         }
       }
     }
   } catch (error) {
+    console.error("[SSE] Catch block triggered:", error);
     // Re-throw abort errors so caller can handle UI cleanup
     if (error instanceof Error && error.name === 'AbortError') {
-      console.log('Request aborted by user');
+      console.log('[SSE] Request aborted by user');
       throw error;  // Re-throw so App.tsx catch block can reset UI state
     }
 
@@ -157,6 +217,7 @@ export async function askPanelStream(
     }
     throw error;
   } finally {
+    console.log("[SSE] Finally block - releasing reader lock");
     reader.releaseLock();
   }
 }
@@ -251,4 +312,146 @@ export async function generateTitle(firstMessage: string): Promise<string> {
     console.warn("Failed to generate title:", error);
     return "";
   }
+}
+
+// ============================================================================
+// Conversation Persistence API
+// ============================================================================
+
+/**
+ * Save a single conversation message to the server
+ */
+export async function saveConversationMessage(
+  threadId: string,
+  message: MessageEntry
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/conversations/${threadId}/messages`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      thread_id: threadId,
+      message,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to save message: ${text}`);
+  }
+}
+
+/**
+ * Save multiple conversation messages in a batch
+ */
+export async function saveConversationMessages(
+  threadId: string,
+  messages: MessageEntry[]
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/conversations/${threadId}/messages/batch`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      thread_id: threadId,
+      messages,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to save messages: ${text}`);
+  }
+}
+
+/**
+ * Get all messages for a specific conversation thread
+ */
+export async function getConversation(threadId: string): Promise<ConversationResponse> {
+  const res = await fetch(`${API_BASE_URL}/conversations/${threadId}`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      // Thread not found or empty - return empty conversation
+      return { thread_id: threadId, messages: [] };
+    }
+    const text = await res.text();
+    throw new Error(`Failed to get conversation: ${text}`);
+  }
+
+  return await res.json();
+}
+
+/**
+ * Get all conversations for the current user
+ */
+export async function getAllConversations(): Promise<AllConversationsResponse> {
+  const res = await fetch(`${API_BASE_URL}/conversations/`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to get conversations: ${text}`);
+  }
+
+  return await res.json();
+}
+
+/**
+ * Delete a specific message from a conversation
+ */
+export async function deleteConversationMessage(
+  threadId: string,
+  messageId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/conversations/${threadId}/messages/${messageId}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text();
+    throw new Error(`Failed to delete message: ${text}`);
+  }
+}
+
+/**
+ * Delete an entire conversation
+ */
+export async function deleteConversation(threadId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/conversations/${threadId}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text();
+    throw new Error(`Failed to delete conversation: ${text}`);
+  }
+}
+
+// ============================================================================
+// Quota Check API
+// ============================================================================
+
+/**
+ * Check API quota availability for specified providers.
+ * Returns status for each provider indicating if it can be used.
+ */
+export async function checkProvidersQuota(providers: string[]): Promise<QuotaCheckResponse> {
+  const res = await fetch(`${API_BASE_URL}/providers/check-quota`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ providers }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to check quota: ${text}`);
+  }
+
+  return await res.json();
 }

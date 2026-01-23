@@ -27,6 +27,7 @@ class UserResponse(BaseModel):
     email: str = Field(..., description="User email address")
     name: Optional[str] = Field(None, description="User display name")
     picture_url: Optional[str] = Field(None, description="Profile picture URL")
+    role: str = Field(default="user", description="User role (user or admin)")
     created_at: datetime = Field(..., description="Account creation timestamp")
     last_login: datetime = Field(..., description="Last login timestamp")
 

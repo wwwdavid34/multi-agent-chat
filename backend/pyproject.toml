@@ -35,6 +35,7 @@ dependencies = [
     "google-auth>=2.25.2",  # Google OAuth token verification
     "PyJWT>=2.8.0",          # JWT token generation
     "cryptography>=41.0.7",  # AES encryption for API keys
+    "email-validator>=2.1.0",  # Required by Pydantic for EmailStr validation
 ]
 
 [project.optional-dependencies]

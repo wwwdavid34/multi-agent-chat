@@ -314,6 +314,129 @@ class DebateOrchestrator:
         role_summary = {name: info["role"] for name, info in roles.items()}
         logger.info(f"Assigned adversarial roles: {role_summary}")
 
+    def _seed_assigned_roles_from_panelist_configs(self) -> None:
+        """Seed assigned_roles from panelist configs (pre-assigned roles only).
+
+        This ensures role-aware prompting works even when stance_mode is "free"/"assigned"
+        but the frontend provided per-panelist roles in the panelist configs.
+        """
+        panelists = self.state.get("panelists", []) or []
+        question = self.state.get("question", "the topic")
+
+        assigned_roles = self.state.get("assigned_roles")
+        if not isinstance(assigned_roles, dict):
+            assigned_roles = {}
+
+        for i, panelist in enumerate(panelists):
+            name = panelist.get("name", f"Panelist_{i}")
+            pre_role = panelist.get("role")
+
+            if pre_role not in ("PRO", "CON", "DEVIL_ADVOCATE"):
+                continue
+
+            existing = assigned_roles.get(name)
+            existing_role = existing.get("role") if isinstance(existing, dict) else None
+            if existing_role in ("PRO", "CON", "DEVIL_ADVOCATE"):
+                if existing_role != pre_role:
+                    logger.warning(
+                        f"Panelist role conflict for {name}: panelist_config={pre_role} assigned_roles={existing_role}. "
+                        f"Keeping assigned_roles."
+                    )
+                continue
+
+            if pre_role == "PRO":
+                position = f"Argue FOR: {question}"
+                constraints = [
+                    "You MUST argue in favor of the proposition",
+                    "Find and emphasize positive aspects and benefits",
+                    "Counter all arguments from CON panelists",
+                    "Never concede that the proposition is wrong",
+                ]
+            elif pre_role == "CON":
+                position = f"Argue AGAINST: {question}"
+                constraints = [
+                    "You MUST argue against the proposition",
+                    "Find and emphasize negative aspects, risks, and problems",
+                    "Counter all arguments from PRO panelists",
+                    "Never concede that the proposition is right",
+                ]
+            else:  # DEVIL_ADVOCATE
+                position = "STRICTLY NEUTRAL CRITIC - You do NOT support either side of this debate"
+                constraints = [
+                    "ABSOLUTE RULE: Your stance is NEUTRAL - never FOR, never AGAINST",
+                    "You exist ONLY to critique - you have NO personal position on the topic",
+                    "When PRO argues, you MUST find flaws in their reasoning",
+                    "When CON argues, you MUST find flaws in their reasoning too",
+                    "You NEVER say 'I agree' or 'I support' any position",
+                ]
+
+            assigned_roles[name] = {
+                "panelist_name": name,
+                "role": pre_role,
+                "position_statement": position,
+                "constraints": constraints,
+            }
+
+        self.state["assigned_roles"] = assigned_roles
+
+    def _role_expected_stance(self, role_type: str) -> Optional[str]:
+        if role_type == "PRO":
+            return "FOR"
+        if role_type == "CON":
+            return "AGAINST"
+        if role_type == "DEVIL_ADVOCATE":
+            return "NEUTRAL"
+        return None
+
+    def _role_required_prefix(self, role_type: str) -> Optional[str]:
+        if role_type == "PRO":
+            return "Position: FOR -"
+        if role_type == "CON":
+            return "Position: AGAINST -"
+        if role_type == "DEVIL_ADVOCATE":
+            return "As Devil's Advocate, I will critique both sides without taking a position."
+        return None
+
+    def _starts_with_required_prefix(self, response_text: str, required_prefix: str) -> bool:
+        stripped = (response_text or "").lstrip()
+        if stripped.startswith(required_prefix):
+            return True
+        if stripped.startswith(("\"", "“", "”", "'")):
+            stripped = stripped[1:].lstrip()
+            return stripped.startswith(required_prefix)
+        return False
+
+    def _build_stance_reminder_section(self) -> str:
+        """Build a per-round stance reminder to reinforce assigned roles."""
+        assigned_roles = self.state.get("assigned_roles") or {}
+
+        lines: List[str] = []
+        if assigned_roles:
+            for name, role_info in assigned_roles.items():
+                role_type = (role_info or {}).get("role", "")
+                required_prefix = self._role_required_prefix(role_type) or ""
+                if role_type == "PRO":
+                    lines.append(f"  - {name}: PRO (argue FOR) | start with: {required_prefix}")
+                elif role_type == "CON":
+                    lines.append(f"  - {name}: CON (argue AGAINST) | start with: {required_prefix}")
+                elif role_type == "DEVIL_ADVOCATE":
+                    lines.append(f"  - {name}: DEVIL'S ADVOCATE (neutral critic) | start with: {required_prefix}")
+                elif role_type:
+                    lines.append(f"  - {name}: {role_type}")
+        else:
+            lines = [
+                "  - Each panelist MUST take a clear stance (FOR or AGAINST) and stick to it.",
+                "  - Start with either: Position: FOR -  OR  Position: AGAINST -",
+                "  - Do NOT hedge with 'it depends' or switch sides mid-debate.",
+            ]
+
+        return (
+            "\n\n═══════════════════════════════════════════════════════════════\n"
+            "MANDATORY STANCE REMINDER (do not switch roles):\n"
+            + "\n".join(lines)
+            + "\n═══════════════════════════════════════════════════════════════\n"
+        )
+
     def _build_role_enhanced_prompt(self, panelist_name: str, base_prompt: str) -> str:
         """Build system prompt with role constraints for adversarial debates.
 
@@ -487,6 +610,10 @@ YOU MUST acknowledge at least ONE strong point from {leader_name}'s argument:
 2. Explain why it's a valid point
 3. Then continue making your own arguments
 
+IMPORTANT:
+- Do NOT switch sides or abandon your assigned role
+- Frame the concession as a LIMITED point, then reaffirm your overall stance
+
 This shows intellectual honesty and may help recover your standing.
 ════════════════════════════════════════════════════════════
 """
@@ -507,10 +634,17 @@ This shows intellectual honesty and may help recover your standing.
 
         await self._emit_event("status", message="Initializing panel...")
 
+        # Always seed pre-assigned roles from panelist configs so they're reflected in
+        # state["assigned_roles"] and recognized by prompting/scoring.
+        self._seed_assigned_roles_from_panelist_configs()
+
         # Handle adversarial role assignment (Phase 2)
         stance_mode = self.state.get("stance_mode", "free")
-        if stance_mode == "adversarial" and not self.state.get("assigned_roles"):
-            self._auto_assign_adversarial_roles()
+        if stance_mode == "adversarial":
+            panelist_count = len(self.state.get("panelists") or [])
+            assigned_count = len(self.state.get("assigned_roles") or {})
+            if assigned_count != panelist_count:
+                self._auto_assign_adversarial_roles()
             await self._emit_event(
                 "roles_assigned",
                 mode="adversarial",
@@ -670,30 +804,11 @@ This shows intellectual honesty and may help recover your standing.
         if round_number == 0:
             # Check for assigned roles to create explicit stance assignments
             assigned_roles = self.state.get("assigned_roles") or {}
+            stance_reminder = self._build_stance_reminder_section()
 
             if assigned_roles:
-                # Build explicit role assignments for the debate
-                role_assignments = []
-                for name, role_info in assigned_roles.items():
-                    role_type = role_info.get("role", "")
-                    if role_type == "PRO":
-                        role_assignments.append(f"  - {name}: You MUST argue FOR the proposition")
-                    elif role_type == "CON":
-                        role_assignments.append(f"  - {name}: You MUST argue AGAINST the proposition")
-                    elif role_type == "DEVIL_ADVOCATE":
-                        role_assignments.append(f"  - {name}: DEVIL'S ADVOCATE - Do NOT take sides, criticize BOTH PRO and CON equally")
-                    elif role_type:
-                        # Unknown role - log and use generic
-                        logger.warning(f"Unknown role type '{role_type}' in role assignments")
-                        role_assignments.append(f"  - {name}: Present a balanced analysis")
-
-                role_section = "\n".join(role_assignments)
                 initial_message = f"""DEBATE TOPIC: {question}
-
-═══════════════════════════════════════════════════════════════
-MANDATORY STANCE ASSIGNMENTS (You MUST follow your assigned role):
-{role_section}
-═══════════════════════════════════════════════════════════════
+{stance_reminder}
 
 RULES FOR PRO PANELISTS:
 - You MUST argue FOR the proposition
@@ -707,7 +822,7 @@ RULES FOR CON PANELISTS:
 
 SPECIAL RULES FOR DEVIL'S ADVOCATE:
 - YOU ARE FORBIDDEN from starting with "Position: FOR" or "Position: AGAINST"
-- You MUST start with "As Devil's Advocate, I will critique both sides without taking a position."
+- You MUST start with: As Devil's Advocate, I will critique both sides without taking a position.
 - You MUST critique BOTH the PRO arguments AND the CON arguments
 - You have NO OPINION - you are a critic, not a participant
 - If you take sides, you have FAILED your role
@@ -717,6 +832,7 @@ Now, each panelist: state your assigned position clearly and argue for it.
             else:
                 # No assigned roles - use generic polarization prompt
                 initial_message = f"""DEBATE TOPIC: {question}
+{stance_reminder}
 
 IMPORTANT: Each panelist MUST take a clear FOR or AGAINST position.
 - Do NOT all agree or hedge with "it depends"
@@ -726,14 +842,37 @@ IMPORTANT: Each panelist MUST take a clear FOR or AGAINST position.
 
 Now, each panelist: state your position clearly and argue for it."""
         else:
-            # Continuation for subsequent rounds
-            initial_message = f"""Continue debating: {question}
+            # Continuation for subsequent rounds - build opponent summary for direct attacks
+            debate_history = self.state.get("debate_history", [])
+            opponent_summary = ""
+            if debate_history:
+                latest_round = debate_history[-1]
+                responses = latest_round.get("panel_responses", {})
+                if responses:
+                    opponent_summary = "\n\n🎯 OPPONENT CLAIMS TO ATTACK:\n"
+                    for name, resp in responses.items():
+                        # Extract first 200 chars as their main claim
+                        claim_preview = resp[:200].replace('\n', ' ')
+                        if len(resp) > 200:
+                            claim_preview += "..."
+                        opponent_summary += f"- {name} argued: \"{claim_preview}\"\n"
+            stance_reminder = self._build_stance_reminder_section()
 
-REMINDER:
-- If you agree with someone, push their argument FURTHER or find a new angle
-- If everyone is agreeing, someone MUST play devil's advocate
-- Challenge weak points in other arguments directly
-- Defend your position against critiques"""
+            initial_message = f"""Continue debating: {question}
+{opponent_summary}{stance_reminder}
+⚔️ ROUND {round_number + 1} INSTRUCTIONS - TIME TO FIGHT:
+
+1. ATTACK OPPONENTS BY NAME - Quote their specific claims and demolish them
+2. Don't just repeat your position - RESPOND to what they said
+3. Use phrases like "@[Name]: Your claim that X is wrong because..."
+4. Find the WEAKEST point in each opponent's argument and expose it
+5. If they attacked you, DEFEND and COUNTER-ATTACK
+
+PRO panelists: Attack CON arguments. Show why their fears are unfounded.
+CON panelists: Attack PRO arguments. Show why their promises are empty.
+Devil's Advocate: Critique EVERYONE. Find flaws in ALL arguments.
+
+This is a DEBATE, not a monologue. ENGAGE YOUR OPPONENTS!"""
 
         # Inject the message into AG2 group chat
         self.groupchat.messages.append({
@@ -766,18 +905,31 @@ REMINDER:
                         if role_type == "PRO":
                             role_instruction = f""">>> {agent.name}, YOUR MANDATORY ROLE IS: PRO <<<
 You MUST argue FOR the proposition.
-START your response with exactly: "Position: FOR"
+START your response with exactly: Position: FOR -
 You are FORBIDDEN from arguing against or staying neutral."""
                         elif role_type == "CON":
                             role_instruction = f""">>> {agent.name}, YOUR MANDATORY ROLE IS: CON <<<
 You MUST argue AGAINST the proposition.
-START your response with exactly: "Position: AGAINST"
+START your response with exactly: Position: AGAINST -
 You are FORBIDDEN from arguing for or staying neutral."""
                         elif role_type == "DEVIL_ADVOCATE":
+                            # Get actual panelist names for the instruction
+                            other_panelists = [a.name for a in self.agents if a.name != agent.name]
+                            panelist_list = ", ".join(other_panelists) if other_panelists else "other panelists"
+
                             role_instruction = f""">>> {agent.name}, YOU ARE THE DEVIL'S ADVOCATE - YOU MUST NOT TAKE A SIDE <<<
 YOU ARE FORBIDDEN FROM: Starting with "Position: FOR" or "Position: AGAINST"
-YOU MUST START WITH: "As Devil's Advocate, I will critique both sides without taking a position."
-YOUR JOB: Criticize BOTH the PRO and CON arguments - find flaws in EVERYONE's reasoning.
+YOU MUST START WITH: As Devil's Advocate, I will critique both sides without taking a position.
+
+IMPORTANT FOR ROUND 1: This is the FIRST round - the other panelists ({panelist_list}) are responding at the same time as you.
+Since you haven't seen their arguments yet, you should:
+1. Introduce your role as the Devil's Advocate
+2. Explain that you will be critiquing BOTH sides equally
+3. Outline the types of weaknesses you'll be looking for (logical fallacies, missing evidence, assumptions)
+4. Make clear that you take NO position on the topic itself
+
+In SUBSEQUENT rounds, you will directly attack specific arguments from {panelist_list} by name.
+
 YOU DO NOT HAVE AN OPINION. YOU ARE A CRITIC, NOT A PARTICIPANT.
 If you take a FOR or AGAINST position, you have FAILED."""
                         else:
@@ -828,7 +980,157 @@ If you take a FOR or AGAINST position, you have FAILED."""
                         reply_text = str(reply) if reply else ""
 
                     if reply_text and reply_text.strip():
-                        responses[agent.name] = reply_text
+                        final_text = reply_text
+
+                        # Enforce stance-taking format and stance compliance (deterministic, at most 2 rewrite attempts).
+                        required_prefix = self._role_required_prefix(role_type) if role_type else None
+                        if required_prefix:
+                            stripped = final_text.lstrip()
+                            stripped_no_quote = stripped
+                            if stripped_no_quote.startswith(("\"", "“", "”", "'")):
+                                stripped_no_quote = stripped_no_quote[1:].lstrip()
+
+                            format_ok = self._starts_with_required_prefix(final_text, required_prefix)
+                            if role_type == "DEVIL_ADVOCATE" and (
+                                stripped_no_quote.startswith("Position: FOR") or stripped_no_quote.startswith("Position: AGAINST")
+                            ):
+                                format_ok = False
+
+                            if not format_ok:
+                                correction_name = f"StanceCorrection_{agent.name}"
+                                correction = f"""Your previous response did NOT follow your assigned role requirements.
+
+Rewrite your response so that it strictly follows your role: {role_type}.
+MANDATORY: Start your rewritten response with exactly:
+{required_prefix}
+Return ONLY the rewritten response text.
+
+Previous response:
+{final_text}
+"""
+                                self.groupchat.messages.append({
+                                    "role": "system",
+                                    "content": correction,
+                                    "name": correction_name,
+                                })
+                                try:
+                                    corrected = agent.generate_reply(
+                                        messages=self.groupchat.messages,
+                                        sender=self.manager,
+                                    )
+                                finally:
+                                    self.groupchat.messages = [
+                                        msg for msg in self.groupchat.messages
+                                        if msg.get("name") != correction_name
+                                    ]
+
+                                if isinstance(corrected, dict):
+                                    corrected_text = corrected.get("content") or str(corrected)
+                                elif isinstance(corrected, str):
+                                    corrected_text = corrected
+                                else:
+                                    corrected_text = str(corrected) if corrected else ""
+
+                                if corrected_text and corrected_text.strip():
+                                    final_text = corrected_text
+
+                            if role_type == "DEVIL_ADVOCATE":
+                                # Devil's Advocate must remain neutral: never take a FOR/AGAINST position or agree with a side.
+                                has_banned_stance = re.search(r"\bPosition:\s*(FOR|AGAINST)\b", final_text, re.IGNORECASE)
+                                has_agreement = re.search(r"\bI\s+(agree|support)\b", final_text, re.IGNORECASE)
+                                if has_banned_stance or has_agreement:
+                                    mismatch_name = f"StanceMismatchCorrection_{agent.name}"
+                                    mismatch = f"""You violated the Devil's Advocate neutrality requirements.
+
+Assigned role: DEVIL_ADVOCATE
+MANDATORY: Rewrite your response to remain NEUTRAL, critique BOTH sides, and start with exactly:
+{required_prefix}
+
+FORBIDDEN: Do NOT use "Position: FOR" or "Position: AGAINST". Do NOT say "I agree" or "I support".
+Return ONLY the rewritten response text.
+
+Previous response:
+{final_text}
+"""
+                                    self.groupchat.messages.append({
+                                        "role": "system",
+                                        "content": mismatch,
+                                        "name": mismatch_name,
+                                    })
+                                    try:
+                                        corrected2 = agent.generate_reply(
+                                            messages=self.groupchat.messages,
+                                            sender=self.manager,
+                                        )
+                                    finally:
+                                        self.groupchat.messages = [
+                                            msg for msg in self.groupchat.messages
+                                            if msg.get("name") != mismatch_name
+                                        ]
+
+                                    if isinstance(corrected2, dict):
+                                        corrected2_text = corrected2.get("content") or str(corrected2)
+                                    elif isinstance(corrected2, str):
+                                        corrected2_text = corrected2
+                                    else:
+                                        corrected2_text = str(corrected2) if corrected2 else ""
+
+                                    if corrected2_text and corrected2_text.strip():
+                                        final_text = corrected2_text
+
+                            # Additional stance compliance check (beyond just the prefix).
+                            expected_stance = self._role_expected_stance(role_type)
+                            if expected_stance and role_type != "DEVIL_ADVOCATE":
+                                if self.evaluators_enabled:
+                                    stance_data = await self.stance_extractor.extract_stance(
+                                        panelist_name=agent.name,
+                                        response=final_text,
+                                        previous_stance=None,
+                                        assigned_role=role_type,
+                                    )
+                                    extracted = (stance_data or {}).get("stance")
+                                    confidence = float((stance_data or {}).get("confidence", 0.0) or 0.0)
+                                    if extracted and extracted != expected_stance and confidence >= 0.6:
+                                        mismatch_name = f"StanceMismatchCorrection_{agent.name}"
+                                        mismatch = f"""Your response does not match your assigned stance.
+
+Assigned role: {role_type}
+Expected stance: {expected_stance}
+MANDATORY: Rewrite your response to match your assigned stance and start with exactly:
+{required_prefix}
+
+Return ONLY the rewritten response text.
+
+Previous response:
+{final_text}
+"""
+                                        self.groupchat.messages.append({
+                                            "role": "system",
+                                            "content": mismatch,
+                                            "name": mismatch_name,
+                                        })
+                                        try:
+                                            corrected2 = agent.generate_reply(
+                                                messages=self.groupchat.messages,
+                                                sender=self.manager,
+                                            )
+                                        finally:
+                                            self.groupchat.messages = [
+                                                msg for msg in self.groupchat.messages
+                                                if msg.get("name") != mismatch_name
+                                            ]
+
+                                        if isinstance(corrected2, dict):
+                                            corrected2_text = corrected2.get("content") or str(corrected2)
+                                        elif isinstance(corrected2, str):
+                                            corrected2_text = corrected2
+                                        else:
+                                            corrected2_text = str(corrected2) if corrected2 else ""
+
+                                        if corrected2_text and corrected2_text.strip():
+                                            final_text = corrected2_text
+
+                        responses[agent.name] = final_text
 
                         # Remove the personalized score feedback message (keep groupchat clean)
                         if round_number > 0 and self.scoring_enabled:
@@ -841,7 +1143,7 @@ If you take a FOR or AGAINST position, you have FAILED."""
                         # For subsequent rounds: add immediately (normal debate behavior)
                         response_message = {
                             "role": "assistant",
-                            "content": reply_text,
+                            "content": final_text,
                             "name": agent.name,
                         }
 
@@ -856,12 +1158,19 @@ If you take a FOR or AGAINST position, you have FAILED."""
                         await self._emit_event(
                             "panelist_response",
                             panelist=agent.name,
-                            response=reply_text,
+                            response=final_text,
                         )
 
                 except Exception as e:
                     error_msg = str(e)
                     logger.error(f"Error getting response from {agent.name}: {error_msg}")
+
+                    # Clean up the role instruction message on error too
+                    if role_type and is_first_round:
+                        self.groupchat.messages = [
+                            msg for msg in self.groupchat.messages
+                            if msg.get("name") != f"RoleInstruction_{agent.name}"
+                        ]
 
                     # Clean up score feedback message on error too
                     if round_number > 0 and self.scoring_enabled:
@@ -1153,6 +1462,17 @@ If you take a FOR or AGAINST position, you have FAILED."""
                 stance_data = stances.get(panelist_name, {})
                 current_stance = stance_data.get("stance")
 
+                # Use assigned role as the declared stance, so scoring can reward consistency
+                # and penalize drift from the intended debate stance.
+                assigned_role = (self.state.get("assigned_roles") or {}).get(panelist_name, {}).get("role")
+                declared_stance = None
+                if assigned_role == "PRO":
+                    declared_stance = "FOR"
+                elif assigned_role == "CON":
+                    declared_stance = "AGAINST"
+                elif assigned_role == "DEVIL_ADVOCATE":
+                    declared_stance = "NEUTRAL"
+
                 # Count evidence and novel arguments
                 evidence_count = sum(
                     1 for arg in arguments
@@ -1173,7 +1493,7 @@ If you take a FOR or AGAINST position, you have FAILED."""
                     panelist_name=panelist_name,
                     response=response,
                     opponent_claims=opponent_claims,
-                    declared_stance=None,  # Will be set from previous rounds
+                    declared_stance=declared_stance,
                     previous_arguments=None,
                     current_stance=current_stance,
                     evidence_count=evidence_count,

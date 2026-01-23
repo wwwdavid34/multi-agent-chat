@@ -72,15 +72,18 @@ function extractErrorMessage(payload: unknown): string | null {
 
 export async function fetchModelsForProvider(
   provider: LLMProvider,
-  apiKey: string
+  apiKey: string,
+  authToken?: string
 ): Promise<ProviderModel[]> {
-  if (!apiKey.trim()) {
-    throw new Error("API key is required");
+  // Build headers
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
   }
 
   const response = await fetch(`${API_BASE_URL}/providers/${provider}/models`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ api_key: apiKey.trim() }),
   });
 

@@ -1,5 +1,6 @@
 """Authentication router with login, user management, and API key storage."""
 
+import json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -17,6 +18,8 @@ from auth.encryption import (
 )
 from auth.google_oauth import verify_google_token
 from auth.jwt_manager import create_access_token
+from pydantic import BaseModel
+
 from auth.models import (
     ApiKeysRequest,
     ApiKeysResponse,
@@ -90,7 +93,7 @@ async def login_with_google(
     async with pool.acquire() as conn:
         # Check if user exists
         user_row = await conn.fetchrow(
-            "SELECT id, google_id, email, name, picture_url, created_at, last_login "
+            "SELECT id, google_id, email, name, picture_url, role, created_at, last_login "
             "FROM users WHERE google_id = $1",
             google_id,
         )
@@ -110,7 +113,7 @@ async def login_with_google(
                 """
                 INSERT INTO users (google_id, email, name, picture_url)
                 VALUES ($1, $2, $3, $4)
-                RETURNING id, google_id, email, name, picture_url, created_at, last_login
+                RETURNING id, google_id, email, name, picture_url, role, created_at, last_login
                 """,
                 google_id,
                 email,
@@ -129,6 +132,7 @@ async def login_with_google(
             email=user_row["email"],
             name=user_row["name"],
             picture_url=user_row["picture_url"],
+            role=user_row["role"] or "user",
             created_at=user_row["created_at"],
             last_login=user_row["last_login"],
         )
@@ -155,7 +159,7 @@ async def get_current_user_info(
     """
     async with pool.acquire() as conn:
         user_row = await conn.fetchrow(
-            "SELECT id, email, name, picture_url, created_at, last_login "
+            "SELECT id, email, name, picture_url, role, created_at, last_login "
             "FROM users WHERE id = $1",
             UUID(user.user_id),
         )
@@ -171,6 +175,7 @@ async def get_current_user_info(
             email=user_row["email"],
             name=user_row["name"],
             picture_url=user_row["picture_url"],
+            role=user_row["role"] or "user",
             created_at=user_row["created_at"],
             last_login=user_row["last_login"],
         )
@@ -336,6 +341,7 @@ async def migrate_threads(
             )
 
             # Log migration for audit trail
+            metadata_json = json.dumps(request.metadata) if request.metadata else None
             await conn.execute(
                 """
                 INSERT INTO thread_migrations (user_id, thread_id, source_metadata)
@@ -343,7 +349,7 @@ async def migrate_threads(
                 """,
                 UUID(user_id),
                 thread_id,
-                request.metadata,
+                metadata_json,
             )
 
             migrated.append(thread_id)
@@ -438,3 +444,46 @@ async def delete_thread(
             )
 
         logger.info(f"Thread deleted: {thread_id} by user {user_id}")
+
+
+# ============================================================================
+# System Key Status
+# ============================================================================
+
+
+class SystemKeyStatusResponse(BaseModel):
+    """Response showing which providers user can access via system keys."""
+
+    openai: bool = False
+    anthropic: bool = False
+    google: bool = False
+    xai: bool = False
+
+
+@router.get("/system-key-status", response_model=SystemKeyStatusResponse)
+async def get_system_key_status(
+    user: TokenPayload = Depends(get_current_user),
+    pool: asyncpg.Pool = Depends(get_db),
+):
+    """
+    Check which providers the current user can access via system keys.
+
+    Returns a map of provider -> boolean indicating if the user is allowlisted
+    for that provider's system key.
+
+    Requires: Valid JWT token
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT provider FROM system_key_allowlist WHERE email = $1",
+            user.email,
+        )
+
+        providers = {row["provider"] for row in rows}
+
+        return SystemKeyStatusResponse(
+            openai="openai" in providers,
+            anthropic="anthropic" in providers,
+            google="google" in providers,
+            xai="xai" in providers,
+        )

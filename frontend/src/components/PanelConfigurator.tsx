@@ -1,16 +1,34 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { PROVIDERS, PROVIDER_LABELS } from "../lib/modelProviders";
+import type { SystemKeyStatus } from "../contexts/AuthContext";
 import type {
+  DebateRole,
   LLMProvider,
   PanelistConfigPayload,
   ProviderKeyMap,
   ProviderModelsMap,
   ProviderModelStatusMap,
 } from "../types";
+
+// Role display labels and colors
+const ROLE_OPTIONS: { value: DebateRole | ""; label: string; color: string }[] = [
+  { value: "", label: "Auto", color: "text-muted-foreground" },
+  { value: "PRO", label: "PRO (For)", color: "text-green-600 dark:text-green-400" },
+  { value: "CON", label: "CON (Against)", color: "text-red-600 dark:text-red-400" },
+  { value: "DEVIL_ADVOCATE", label: "Devil's Advocate", color: "text-amber-600 dark:text-amber-400" },
+];
 import { useMemo, useState } from "react";
 import { loadPresets, savePreset, deletePreset, type PanelistPreset } from "../lib/presetManager";
 import { getModelCapabilities } from "../lib/modelCapabilities";
 import { validatePanelistName } from "../lib/panelistNaming";
+
+// Map provider IDs to SystemKeyStatus keys
+const PROVIDER_TO_STATUS_KEY: Record<string, keyof SystemKeyStatus> = {
+  openai: "openai",
+  gemini: "google",
+  claude: "anthropic",
+  grok: "xai",
+};
 
 interface PanelConfiguratorProps {
   open: boolean;
@@ -26,6 +44,7 @@ interface PanelConfiguratorProps {
   onFetchModels: (provider: LLMProvider) => Promise<void>;
   maxPanelists: number;
   onLoadPreset: (preset: PanelistPreset) => void;
+  systemKeyStatus?: SystemKeyStatus | null;
 }
 
 type TabType = "panelists" | "presets" | "api-keys";
@@ -44,7 +63,14 @@ export function PanelConfigurator({
   onFetchModels,
   maxPanelists,
   onLoadPreset,
+  systemKeyStatus,
 }: PanelConfiguratorProps) {
+  // Helper to check if system key is available for a provider
+  const hasSystemKey = (providerId: string): boolean => {
+    if (!systemKeyStatus) return false;
+    const statusKey = PROVIDER_TO_STATUS_KEY[providerId];
+    return statusKey ? systemKeyStatus[statusKey] : false;
+  };
   const canAddMore = panelists.length < maxPanelists;
   const [activeTab, setActiveTab] = useState<TabType>("panelists");
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -199,21 +225,33 @@ export function PanelConfigurator({
                   <header>
                     <h3 className="text-base font-semibold m-0">Provider API Keys</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Keys are stored locally in your browser and only used to fetch model lists.
+                  {systemKeyStatus ? "System keys are available for allowlisted providers. You can also use your own keys." : "Keys are stored locally in your browser and only used to fetch model lists."}
                 </p>
               </header>
               <div className="space-y-3">
                 {PROVIDERS.map((provider) => {
                   const status = modelStatus[provider.id];
                   const keyValue = providerKeys[provider.id] ?? "";
+                  const systemKeyAvailable = hasSystemKey(provider.id);
+                  const canFetch = keyValue || systemKeyAvailable;
                   return (
-                    <div key={provider.id} className="rounded-lg border border-border p-4 bg-card">
+                    <div key={provider.id} className={`rounded-lg border p-4 bg-card ${systemKeyAvailable ? "border-green-500/50" : "border-border"}`}>
                       <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="font-semibold m-0 text-foreground">{provider.label}</p>
-                          <p className="text-xs text-muted-foreground m-0 mt-0.5">
-                            {provider.description}
-                          </p>
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <p className="font-semibold m-0 text-foreground">{provider.label}</p>
+                            <p className="text-xs text-muted-foreground m-0 mt-0.5">
+                              {provider.description}
+                            </p>
+                          </div>
+                          {systemKeyAvailable && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20">
+                              <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                              </svg>
+                              System Key
+                            </span>
+                          )}
                         </div>
                         <a
                           href={provider.docs}
@@ -224,8 +262,16 @@ export function PanelConfigurator({
                           Docs ↗
                         </a>
                       </div>
+                      {systemKeyAvailable && (
+                        <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
+                          <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                          You have access to system-provided API key for this provider
+                        </p>
+                      )}
                       <label className="mt-3 block text-xs tracking-wide text-muted-foreground font-medium">
-                        API Key
+                        {systemKeyAvailable ? "Your Own API Key (optional override)" : "API Key"}
                       </label>
                       <div className="mt-1.5 flex gap-2">
                         <div className="flex-1 relative">
@@ -233,7 +279,7 @@ export function PanelConfigurator({
                             type={showKeys[provider.id] ? "text" : "password"}
                             value={keyValue}
                             onChange={(event) => onProviderKeyChange(provider.id, event.target.value)}
-                            placeholder={provider.keyHint}
+                            placeholder={systemKeyAvailable ? "Leave empty to use system key" : provider.keyHint}
                             className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-20 text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
                           />
                           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
@@ -280,7 +326,7 @@ export function PanelConfigurator({
                         <button
                           type="button"
                           onClick={() => onFetchModels(provider.id)}
-                          disabled={!keyValue || status?.loading}
+                          disabled={!canFetch || status?.loading}
                           className="rounded-lg border-none bg-foreground text-background px-4 py-2 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                         >
                           {status?.loading ? "Fetching..." : "Fetch"}
@@ -501,7 +547,7 @@ export function PanelConfigurator({
                           Remove
                         </button>
                       </div>
-                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
                           <label className="text-xs tracking-wide text-muted-foreground font-medium">
                             Provider
@@ -587,6 +633,32 @@ export function PanelConfigurator({
                               })()}
                             </div>
                           )}
+                        </div>
+                        <div>
+                          <label className="text-xs tracking-wide text-muted-foreground font-medium">
+                            Debate Role
+                          </label>
+                          <select
+                            value={panelist.role || ""}
+                            onChange={(event) =>
+                              onPanelistChange(panelist.id, {
+                                role: event.target.value as DebateRole | undefined || undefined,
+                              })
+                            }
+                            className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
+                          >
+                            {ROLE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            {panelist.role === "PRO" && "Will argue FOR the proposition"}
+                            {panelist.role === "CON" && "Will argue AGAINST the proposition"}
+                            {panelist.role === "DEVIL_ADVOCATE" && "Will critique BOTH sides"}
+                            {!panelist.role && "System will auto-assign based on panel size"}
+                          </p>
                         </div>
                       </div>
                     </div>

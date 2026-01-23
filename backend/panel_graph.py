@@ -740,7 +740,8 @@ def moderator_node(state: PanelState) -> Dict[str, object]:
     moderator_prompt = (
         "You are moderating a panel of expert AI agents.\n"
         "Provide a final consolidated answer.\n"
-        "Highlight agreements and disagreements.\n\n"
+        "Highlight agreements and disagreements.\n"
+        "IMPORTANT: Respond in the same language as the user's original question.\n\n"
         f"Panel responses:\n{panel_text}"
     )
 
