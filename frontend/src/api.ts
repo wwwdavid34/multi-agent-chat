@@ -1,4 +1,15 @@
-import type { AskRequestBody, AskResponse, DebateRound, StanceData } from "./types";
+import type {
+  AskRequestBody,
+  AskResponse,
+  DebateRound,
+  StanceData,
+  DecisionRequestBody,
+  DecisionPhase,
+  ExpertTask,
+  ExpertOutput,
+  Conflict,
+  Recommendation,
+} from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:8000`;
 
@@ -250,5 +261,86 @@ export async function generateTitle(firstMessage: string): Promise<string> {
   } catch (error) {
     console.warn("Failed to generate title:", error);
     return "";
+  }
+}
+
+/**
+ * Stream-based decision assistant API call with real-time phase updates
+ */
+export async function decisionStream(
+  body: DecisionRequestBody,
+  callbacks: {
+    onPhaseUpdate?: (phase: DecisionPhase) => void;
+    onOptionsIdentified?: (options: string[], expertTasks: ExpertTask[]) => void;
+    onExpertComplete?: (expertRole: string, output: ExpertOutput) => void;
+    onConflictsDetected?: (conflicts: Conflict[], openQuestions: string[]) => void;
+    onAwaitingInput?: (data: unknown) => void;
+    onRecommendation?: (recommendation: Recommendation) => void;
+    onError?: (error: Error) => void;
+  },
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/decision-stream`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Decision stream failed: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          switch (event.type) {
+            case "phase_update":
+              callbacks.onPhaseUpdate?.(event.phase);
+              break;
+            case "options_identified":
+              callbacks.onOptionsIdentified?.(event.options, event.expert_tasks);
+              break;
+            case "expert_complete":
+              callbacks.onExpertComplete?.(event.expert_role, event.output);
+              break;
+            case "conflicts_detected":
+              callbacks.onConflictsDetected?.(event.conflicts, event.open_questions);
+              break;
+            case "awaiting_input":
+              callbacks.onAwaitingInput?.(event.data);
+              break;
+            case "recommendation":
+              callbacks.onRecommendation?.(event.recommendation);
+              break;
+            case "error":
+              callbacks.onError?.(new Error(event.message));
+              break;
+            case "done":
+              return;
+          }
+        } catch (e) {
+          console.warn("Failed to parse SSE event:", line, e);
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
