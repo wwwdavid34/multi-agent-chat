@@ -17,6 +17,7 @@ from panel_graph import panel_graph, get_storage_mode
 from provider_clients import ProviderName, fetch_provider_models
 from config import get_debate_engine, get_pg_conn_str, use_in_memory_checkpointer, get_frontend_url, is_auth_enabled
 from routers import auth
+from decision.graph import build_decision_graph
 
 # Initialize logger early so it's available in all functions
 logger = logging.getLogger(__name__)
@@ -127,6 +128,10 @@ class AskRequest(BaseModel):
     # Adversarial role assignment
     stance_mode: str | None = "free"  # "free", "adversarial", or "assigned"
     assigned_roles: dict[str, dict] | None = None  # panelist_name -> role assignment
+    # Preset mode custom personas (for Business Validation, etc.)
+    preset_personas: dict[str, str] | None = None  # panelist_name -> custom persona text
+    # Custom moderator prompt for report consolidation
+    moderator_prompt: str | None = None
 
 
 class AskResponse(BaseModel):
@@ -155,6 +160,15 @@ class GenerateTitleRequest(BaseModel):
 class GenerateTitleResponse(BaseModel):
     title: str
     usage: dict[str, int] | None = None
+
+
+class DecisionRequest(BaseModel):
+    thread_id: str
+    question: str
+    constraints: dict | None = None
+    max_iterations: int = 2
+    resume: bool = False
+    human_feedback: dict | None = None
 
 
 @app.get("/health")
@@ -266,6 +280,10 @@ async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
                         # Adversarial role assignment
                         stance_mode=req.stance_mode or "free",
                         assigned_roles=req.assigned_roles,
+                        # Preset mode custom personas
+                        preset_personas=req.preset_personas,
+                        # Custom moderator prompt for report consolidation
+                        moderator_prompt=req.moderator_prompt,
                     )
 
                 # Stream events from service as SSE
@@ -722,6 +740,74 @@ async def get_thread_usage(thread_id: str):
         "total_tokens": total_input + total_output,
         "messages": [u.to_dict() for u in usages],
     }
+
+
+@app.post("/decision-stream")
+async def decision_stream(req: DecisionRequest, request: Request):
+    """Stream a decision assistant session via SSE."""
+    async def event_generator():
+        try:
+            graph = build_decision_graph()
+            config = {"configurable": {"thread_id": req.thread_id}}
+
+            if req.resume and req.human_feedback:
+                from langgraph.types import Command
+                stream = graph.astream(
+                    Command(resume=req.human_feedback),
+                    config,
+                    stream_mode="updates",
+                )
+            else:
+                initial_state = {
+                    "user_question": req.question,
+                    "constraints": req.constraints or {},
+                    "iteration": 0,
+                    "max_iterations": req.max_iterations,
+                    "phase": "planning",
+                    "expert_outputs": {},
+                }
+                stream = graph.astream(
+                    initial_state,
+                    config,
+                    stream_mode="updates",
+                )
+
+            async for event in stream:
+                for node_name, node_output in event.items():
+                    if node_name == "__interrupt__":
+                        yield f"data: {json.dumps({'type': 'awaiting_input', 'data': node_output})}\n\n"
+                        continue
+
+                    if node_name == "planner":
+                        yield f"data: {json.dumps({'type': 'phase_update', 'phase': 'planning'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'options_identified', 'options': node_output.get('decision_options', []), 'expert_tasks': node_output.get('expert_tasks', [])})}\n\n"
+                    elif node_name == "run_expert":
+                        outputs = node_output.get("expert_outputs", {})
+                        for role, output in outputs.items():
+                            yield f"data: {json.dumps({'type': 'expert_complete', 'expert_role': role, 'output': output}, default=str)}\n\n"
+                    elif node_name == "conflict_detector":
+                        yield f"data: {json.dumps({'type': 'phase_update', 'phase': 'conflict'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'conflicts_detected', 'conflicts': node_output.get('conflicts', []), 'open_questions': node_output.get('open_questions', [])}, default=str)}\n\n"
+                    elif node_name == "human_gate":
+                        yield f"data: {json.dumps({'type': 'phase_update', 'phase': 'human'})}\n\n"
+                    elif node_name == "synthesizer":
+                        yield f"data: {json.dumps({'type': 'phase_update', 'phase': 'synthesis'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'recommendation', 'recommendation': node_output.get('recommendation', {})}, default=str)}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            logger.error("Decision stream error: %s", e, exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # Serve static frontend files (built by Vite)
