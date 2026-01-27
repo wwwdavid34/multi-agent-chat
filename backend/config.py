@@ -131,19 +131,6 @@ def use_in_memory_checkpointer() -> bool:
     return flag in {"1", "true", "yes", "on"}
 
 
-@lru_cache(maxsize=None)
-def get_debate_engine() -> str:
-    """Get the debate engine to use: 'langgraph' (legacy) or 'ag2' (new).
-
-    Default: 'langgraph' for backward compatibility.
-    Set DEBATE_ENGINE=ag2 to use the new AG2 backend.
-    """
-    engine = os.getenv("DEBATE_ENGINE", "langgraph").lower()
-    if engine not in {"langgraph", "ag2"}:
-        raise ValueError(f"Invalid DEBATE_ENGINE: {engine}. Must be 'langgraph' or 'ag2'")
-    return engine
-
-
 # ============================================================================
 # Authentication Configuration
 # ============================================================================

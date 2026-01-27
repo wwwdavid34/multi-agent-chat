@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from panel_graph import panel_graph, get_storage_mode
 from provider_clients import ProviderName, fetch_provider_models
-from config import get_debate_engine, get_pg_conn_str, use_in_memory_checkpointer, get_frontend_url, is_auth_enabled
+from config import get_frontend_url, is_auth_enabled
 from routers import auth
 from decision.graph import build_decision_graph
 
@@ -23,35 +23,6 @@ from decision.graph import build_decision_graph
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Discussion Panel")
-
-# Initialize AG2 debate service (if enabled)
-_ag2_service = None
-
-
-async def get_ag2_service():
-    """Lazy initialize AG2 debate service."""
-    global _ag2_service
-    if _ag2_service is None:
-        try:
-            from debate.service import AG2DebateService
-            from debate.persistence import PostgresDebateStorage, InMemoryDebateStorage
-
-            # Use in-memory storage if configured, otherwise use PostgreSQL
-            if use_in_memory_checkpointer():
-                storage = InMemoryDebateStorage()
-                logger.info("🟦 [AG2-SERVICE] Initialized with IN-MEMORY storage")
-            else:
-                conn_str = get_pg_conn_str()
-                storage = PostgresDebateStorage(conn_str)
-                logger.info("🟦 [AG2-SERVICE] Initialized with PostgreSQL storage")
-
-            _ag2_service = AG2DebateService(storage)
-            logger.info("🟦 [AG2-SERVICE] AG2 debate service ready")
-        except Exception as e:
-            logger.error(f"🟥 [AG2-SERVICE] Failed to initialize: {e}", exc_info=True)
-            raise
-
-    return _ag2_service
 
 # Configure CORS
 # Note: In production, restrict to specific origins for security
@@ -70,35 +41,25 @@ app.include_router(auth.router)
 
 @app.on_event("startup")
 async def startup_event():
-    """Log startup information including debate engine selection."""
+    """Log startup information."""
     try:
-        engine = get_debate_engine()
         storage_mode = get_storage_mode()
 
-        if engine == "ag2":
-            logger.info("=" * 80)
-            logger.info("🔵 DEBATE ENGINE: AG2 (New Backend)")
-            logger.info("=" * 80)
-            logger.info("✓ AG2 backend is ENABLED")
-            logger.info("✓ Using feature-flag based routing")
-            logger.info("✓ Lazy initialization on first request")
-        else:
-            logger.info("=" * 80)
-            logger.info("🟢 DEBATE ENGINE: LangGraph (Legacy Backend)")
-            logger.info("=" * 80)
-            logger.info("✓ LangGraph backend is ACTIVE (default)")
-            logger.info(f"✓ Storage mode: {storage_mode}")
+        logger.info("=" * 80)
+        logger.info("DEBATE ENGINE: LangGraph")
+        logger.info("=" * 80)
+        logger.info(f"Storage mode: {storage_mode}")
 
         # Log authentication status
         if is_auth_enabled():
-            logger.info("🔐 AUTHENTICATION: Enabled (Google OAuth + JWT)")
+            logger.info("AUTHENTICATION: Enabled (Google OAuth + JWT)")
         else:
-            logger.info("⚠️  AUTHENTICATION: Disabled (missing env variables)")
+            logger.info("AUTHENTICATION: Disabled (missing env variables)")
             logger.info("   See GOOGLE_OAUTH_SETUP.md for setup instructions")
 
         logger.info("=" * 80)
     except Exception as e:
-        logger.error(f"🟥 Error during startup: {e}", exc_info=True)
+        logger.error(f"Error during startup: {e}", exc_info=True)
 
 
 class PanelistConfig(BaseModel):
@@ -227,117 +188,10 @@ async def ask(req: AskRequest) -> AskResponse:
 @app.post("/ask-stream")
 async def ask_stream(req: AskRequest, request: Request):
     """Streaming endpoint that provides real-time status updates."""
-
-    # Check feature flag for debate engine selection
-    debate_engine = get_debate_engine()
-
-    if debate_engine == "ag2":
-        # Use new AG2-based backend
-        logger.info("=" * 80)
-        logger.info(f"🔵 [DEBATE] Using AG2 backend for thread: {req.thread_id}")
-        logger.info(f"   Question: {req.question[:80]}{'...' if len(req.question) > 80 else ''}")
-        logger.info(f"   Mode: {req.debate_mode or 'panel'} | Rounds: {req.max_debate_rounds}")
-        logger.info("=" * 80)
-        return await _handle_ag2_debate(req)
-    else:
-        # Use existing LangGraph backend
-        logger.info("=" * 80)
-        logger.info(f"🟢 [DEBATE] Using LangGraph backend for thread: {req.thread_id}")
-        logger.info(f"   Question: {req.question[:80]}{'...' if len(req.question) > 80 else ''}")
-        logger.info(f"   Mode: {req.debate_mode or 'panel'} | Rounds: {req.max_debate_rounds}")
-        logger.info("=" * 80)
-        return await _handle_langgraph_debate(req)
-
-
-async def _handle_ag2_debate(req: AskRequest) -> StreamingResponse:
-    """Handle debate using AG2 backend."""
-    try:
-        logger.info(f"🔵 [AG2] Initializing AG2 debate service for thread {req.thread_id}")
-        service = await get_ag2_service()
-        logger.info(f"🔵 [AG2] Service initialized, starting event stream for thread {req.thread_id}")
-
-        async def ag2_event_stream() -> AsyncIterator[str]:
-            """Stream events from AG2 debate service."""
-            try:
-                # Determine if this is a resume or start
-                if req.continue_debate:
-                    logger.info(f"Resuming AG2 debate for thread {req.thread_id}")
-                    event_iter = service.resume_debate(
-                        thread_id=req.thread_id,
-                        user_message=req.user_message,
-                    )
-                else:
-                    logger.info(f"Starting AG2 debate for thread {req.thread_id}")
-                    # debate_mode: "autonomous" | "supervised" | "participatory" | None
-                    event_iter = service.start_debate(
-                        thread_id=req.thread_id,
-                        question=req.question,
-                        panelists=[p.model_dump() for p in req.panelists] if req.panelists else [],
-                        provider_keys=req.provider_keys or {},
-                        debate_mode=req.debate_mode or "autonomous",
-                        max_debate_rounds=req.max_debate_rounds or 3,
-                        tagged_panelists=req.tagged_panelists or [],
-                        # Adversarial role assignment
-                        stance_mode=req.stance_mode or "free",
-                        assigned_roles=req.assigned_roles,
-                        # Preset mode custom personas
-                        preset_personas=req.preset_personas,
-                        # Custom moderator prompt for report consolidation
-                        moderator_prompt=req.moderator_prompt,
-                    )
-
-                # Stream events from service as SSE
-                event_count = 0
-                async for event in event_iter:
-                    event_count += 1
-                    event_type = event.get("type", "unknown")
-
-                    # Log event with visual indicator
-                    if event_type == "status":
-                        logger.debug(f"🔵 [AG2-EVENT] Status: {event.get('message', '')}")
-                    elif event_type == "panelist_response":
-                        panelist = event.get("panelist", "Unknown")
-                        logger.debug(f"🔵 [AG2-EVENT] {panelist} responded ({len(event.get('response', '')) // 10} words)")
-                    elif event_type == "debate_round":
-                        round_num = event.get("round", {}).get("round_number", "?")
-                        logger.info(f"🔵 [AG2-EVENT] Debate round {round_num} complete")
-                    elif event_type == "result":
-                        logger.info(f"🔵 [AG2-EVENT] Debate complete - Final result received")
-                    elif event_type == "error":
-                        logger.error(f"🔵 [AG2-EVENT] Error: {event.get('message', 'Unknown error')}")
-                    elif event_type == "done":
-                        logger.info(f"🔵 [AG2-EVENT] Stream complete ({event_count} events total)")
-
-                    yield f"data: {json.dumps(event)}\n\n"
-
-            except asyncio.CancelledError:
-                logger.info(f"AG2 debate stream cancelled for {req.thread_id}")
-                return
-            except Exception as e:
-                logger.error(f"Error in AG2 debate stream: {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-
-        return StreamingResponse(
-            ag2_event_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to start AG2 debate service: {e}", exc_info=True)
-        async def error_stream():
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to initialize AG2 debate service: {str(e)}'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        return StreamingResponse(
-            error_stream(),
-            media_type="text/event-stream",
-            status_code=500,
-        )
+    logger.info(f"[DEBATE] LangGraph backend for thread: {req.thread_id}")
+    logger.info(f"   Question: {req.question[:80]}{'...' if len(req.question) > 80 else ''}")
+    logger.info(f"   Mode: {req.debate_mode or 'panel'} | Rounds: {req.max_debate_rounds}")
+    return await _handle_langgraph_debate(req)
 
 
 async def _handle_langgraph_debate(req: AskRequest) -> StreamingResponse:
