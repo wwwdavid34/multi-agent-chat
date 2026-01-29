@@ -101,3 +101,22 @@ class ThreadListResponse(BaseModel):
 
     threads: list[ThreadResponse] = Field(..., description="User's threads")
     total: int = Field(..., description="Total number of threads")
+
+
+class ConversationMessageRequest(BaseModel):
+    """A single conversation message to upsert."""
+
+    message_id: str = Field(..., description="Frontend-generated unique message ID")
+    question: str = Field(..., description="User's question text")
+    attachments: list[str] = Field(default_factory=list, description="Attachment URLs")
+    summary: Optional[str] = Field(None, description="Moderator summary")
+    panel_responses: dict = Field(default_factory=dict, description="Panelist responses")
+    panelists: list[dict] = Field(default_factory=list, description="Panelist configs")
+    debate_history: Optional[list[dict]] = Field(None, description="Debate rounds")
+    debate_mode: Optional[str] = Field(None, description="Debate mode used")
+    discussion_mode_id: Optional[str] = Field(None, description="Discussion mode ID")
+    max_debate_rounds: Optional[int] = Field(None, description="Max debate rounds")
+    debate_paused: bool = Field(default=False, description="Whether debate is paused")
+    stopped: bool = Field(default=False, description="Whether stopped by user")
+    usage: Optional[dict] = Field(None, description="Token usage stats")
+    tagged_panelists: list[str] = Field(default_factory=list, description="@mentioned panelists")

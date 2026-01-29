@@ -24,12 +24,18 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Discussion Panel")
 
-# Configure CORS
-# Note: In production, restrict to specific origins for security
+# Configure CORS — specific origins only (wildcard blocks credentialed requests)
 frontend_url = get_frontend_url()
+cors_origins = [frontend_url]
+# Add localhost variants for dev convenience
+for port in ("5173", "5174", "3000"):
+    for scheme in ("http",):
+        origin = f"{scheme}://localhost:{port}"
+        if origin not in cors_origins:
+            cors_origins.append(origin)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_url, "*"],  # TODO: Remove "*" in production
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,7 +1,7 @@
 import React, { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { askPanel, askPanelStream, decisionStream, fetchInitialKeys, fetchStorageInfo, generateTitle } from "./api";
+import { askPanel, askPanelStream, decisionStream, fetchInitialKeys, fetchStorageInfo, generateTitle, loadAllConversations, saveConversationMessage } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
 import { DebateViewer } from "./components/DebateViewer";
@@ -775,7 +775,41 @@ export default function App() {
   const [scrollContainerWidth, setScrollContainerWidth] = useState<number>(0);
 
   // Authentication and thread migration
-  const { isAuthenticated, isLoading: authLoading, accessToken, migrateThreads, fetchThreads } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, accessToken, migrateThreads, fetchThreads } = useAuth();
+
+  // Keep a ref to the latest conversations so callbacks can read current state
+  const conversationsRef = useRef(conversations);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  /**
+   * Save a message entry to the server (no-op for guests).
+   * Best-effort — errors are logged, never thrown.
+   */
+  const saveMessageToServer = useCallback(
+    (tId: string, entry: MessageEntry) => {
+      if (!isAuthenticated) return;
+      const { expanded, ...rest } = entry;
+      saveConversationMessage(tId, {
+        message_id: rest.id,
+        question: rest.question,
+        attachments: rest.attachments,
+        summary: rest.summary ?? null,
+        panel_responses: rest.panel_responses,
+        panelists: rest.panelists,
+        debate_history: rest.debate_history ?? null,
+        debate_mode: rest.debate_mode ?? null,
+        discussion_mode_id: rest.discussion_mode_id ?? null,
+        max_debate_rounds: rest.max_debate_rounds ?? null,
+        debate_paused: rest.debate_paused ?? false,
+        stopped: rest.stopped ?? false,
+        usage: rest.usage ?? null,
+        tagged_panelists: rest.tagged_panelists ?? [],
+      });
+    },
+    [isAuthenticated]
+  );
 
   // Measure scroll container width for carousel full-width expansion
   useEffect(() => {
@@ -894,10 +928,12 @@ export default function App() {
   }, [isAuthenticated, accessToken, threads, migrateThreads]);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      localStorage.setItem("conversations", JSON.stringify(conversations));
+    if (isAuthenticated && user) {
+      const data = JSON.stringify(conversations);
+      localStorage.setItem("conversations", data);
+      localStorage.setItem(`conversations_${user.id}`, data);
     }
-  }, [conversations, isAuthenticated]);
+  }, [conversations, isAuthenticated, user]);
 
   // Clear conversations for guests - strict isolation
   useEffect(() => {
@@ -909,12 +945,78 @@ export default function App() {
     }
   }, [isAuthenticated, authLoading]);
 
-  // Restore threads from server after login
+  // Restore threads and conversations from server after login
   useEffect(() => {
     const restoreThreads = async () => {
       // Wait for auth to be fully ready (not loading AND authenticated AND have token)
-      if (!authLoading && isAuthenticated && accessToken) {
+      if (!authLoading && isAuthenticated && accessToken && user) {
         console.log("[Thread Restore] Starting thread restoration from server...");
+
+        // 1. Try loading conversations from PostgreSQL first
+        let serverConversationsLoaded = false;
+        try {
+          const serverConv = await loadAllConversations();
+          const serverThreadIds = Object.keys(serverConv);
+          if (serverThreadIds.length > 0) {
+            console.log(`[Thread Restore] Server returned ${serverThreadIds.length} threads with messages`);
+            const normalized: ConversationMap = {};
+            for (const [tid, msgs] of Object.entries(serverConv)) {
+              normalized[tid] = (msgs as any[]).map((msg) => ({
+                id: msg.message_id,
+                question: msg.question ?? "",
+                attachments: msg.attachments ?? [],
+                summary: msg.summary ?? "",
+                panel_responses: msg.panel_responses ?? {},
+                panelists: msg.panelists ?? [],
+                expanded: false,
+                debate_history: msg.debate_history ?? undefined,
+                debate_mode: msg.debate_mode ?? undefined,
+                discussion_mode_id: msg.discussion_mode_id ?? undefined,
+                max_debate_rounds: msg.max_debate_rounds ?? undefined,
+                debate_paused: msg.debate_paused ?? false,
+                stopped: msg.stopped ?? false,
+                usage: msg.usage ?? undefined,
+                tagged_panelists: msg.tagged_panelists ?? [],
+              }));
+            }
+            if (!normalized[DEFAULT_THREAD_ID]) {
+              normalized[DEFAULT_THREAD_ID] = [];
+            }
+            setConversations(normalized);
+            serverConversationsLoaded = true;
+            console.log("[Thread Restore] Conversations loaded from server");
+          }
+        } catch (err) {
+          console.warn("[Thread Restore] Failed to load conversations from server, falling back to localStorage:", err);
+        }
+
+        // 2. Fall back to localStorage if server had nothing
+        if (!serverConversationsLoaded) {
+          const userConvKey = `conversations_${user.id}`;
+          const savedConvRaw = localStorage.getItem(userConvKey);
+          if (savedConvRaw) {
+            const raw = parseJSON<StoredConversationMap>(savedConvRaw, {});
+            const normalized: ConversationMap = {};
+            Object.entries(raw).forEach(([id, entries]) => {
+              normalized[id] = (entries ?? []).map((entry) => ({
+                ...entry,
+                attachments: entry.attachments ?? [],
+                panel_responses: entry.panel_responses ?? {},
+                panelists: entry.panelists ?? [],
+                expanded: Boolean(entry.expanded),
+              }));
+            });
+            if (!normalized[DEFAULT_THREAD_ID]) {
+              normalized[DEFAULT_THREAD_ID] = [];
+            }
+            setConversations(normalized);
+            // Also write back to generic key so other effects stay in sync
+            localStorage.setItem("conversations", savedConvRaw);
+            console.log(`[Thread Restore] Restored conversations from localStorage for user ${user.id}`);
+          }
+        }
+
+        // 3. Restore thread list from server
         try {
           const serverThreads = await fetchThreads();
           console.log(`[Thread Restore] Server returned ${serverThreads.length} threads:`,
@@ -941,7 +1043,7 @@ export default function App() {
       }
     };
     restoreThreads();
-  }, [isAuthenticated, authLoading, accessToken, fetchThreads]);
+  }, [isAuthenticated, authLoading, accessToken, user, fetchThreads]);
 
   useEffect(() => {
     localStorage.setItem("panelists", JSON.stringify(panelists));
@@ -1436,20 +1538,26 @@ export default function App() {
             onDebatePaused: (result) => {
               setEntryStatus(entryId, "Paused for review");
               // Debate paused for user review
-              setConversations((prev) => ({
-                ...prev,
-                [threadId]: prev[threadId]?.map((entry) =>
-                  entry.id === entryId
-                    ? {
-                        ...entry,
-                        panel_responses: result.panel_responses || entry.panel_responses,
-                        debate_history: entry.debate_history,
-                        debate_paused: true,
-                        usage: result.usage || entry.usage,
-                      }
-                    : entry
-                ) ?? [],
-              }));
+              setConversations((prev) => {
+                const updated = {
+                  ...prev,
+                  [threadId]: prev[threadId]?.map((entry) =>
+                    entry.id === entryId
+                      ? {
+                          ...entry,
+                          panel_responses: result.panel_responses || entry.panel_responses,
+                          debate_history: entry.debate_history,
+                          debate_paused: true,
+                          usage: result.usage || entry.usage,
+                        }
+                      : entry
+                  ) ?? [],
+                };
+                // Persist paused state to server
+                const saved = updated[threadId]?.find((e) => e.id === entryId);
+                if (saved) saveMessageToServer(threadId, saved);
+                return updated;
+              });
               // Clear loading state when debate pauses, but keep activeEntryId
               // so the user input area at the bottom shows correctly
               setLoading(false);
@@ -1508,22 +1616,28 @@ export default function App() {
             onResult: (result) => {
               clearEntryStatus(entryId);
               // Update the entry with the actual response
-              setConversations((prev) => ({
-                ...prev,
-                [threadId]: prev[threadId]?.map((entry) =>
-                  entry.id === entryId
-                    ? {
-                        ...entry,
-                        summary: result.summary,
-                        panel_responses: result.panel_responses,
-                        // Keep accumulated debate history from streaming (onDebateRound)
-                        debate_history: entry.debate_history,
-                        debate_paused: false,
-                        usage: result.usage,
-                      }
-                    : entry
-                ) ?? [],
-              }));
+              setConversations((prev) => {
+                const updated = {
+                  ...prev,
+                  [threadId]: prev[threadId]?.map((entry) =>
+                    entry.id === entryId
+                      ? {
+                          ...entry,
+                          summary: result.summary,
+                          panel_responses: result.panel_responses,
+                          // Keep accumulated debate history from streaming (onDebateRound)
+                          debate_history: entry.debate_history,
+                          debate_paused: false,
+                          usage: result.usage,
+                        }
+                      : entry
+                  ) ?? [],
+                };
+                // Persist completed message to server
+                const saved = updated[threadId]?.find((e) => e.id === entryId);
+                if (saved) saveMessageToServer(threadId, saved);
+                return updated;
+              });
 
               // Auto-generate title if this thread has a placeholder name
               // (only the first message will trigger this since after first message,
@@ -1568,18 +1682,24 @@ export default function App() {
         if (err instanceof Error && err.name === 'AbortError') {
           console.log('Request aborted by user');
           // Keep the entry but mark it as stopped
-          setConversations((prev) => ({
-            ...prev,
-            [threadId]: prev[threadId]?.map((entry) =>
-              entry.id === entryId
-                ? {
-                    ...entry,
-                    summary: "Generation stopped by user.",
-                    stopped: true,
-                  }
-                : entry
-            ) ?? [],
-          }));
+          setConversations((prev) => {
+            const updated = {
+              ...prev,
+              [threadId]: prev[threadId]?.map((entry) =>
+                entry.id === entryId
+                  ? {
+                      ...entry,
+                      summary: "Generation stopped by user.",
+                      stopped: true,
+                    }
+                  : entry
+              ) ?? [],
+            };
+            // Persist stopped entry to server
+            const saved = updated[threadId]?.find((e) => e.id === entryId);
+            if (saved) saveMessageToServer(threadId, saved);
+            return updated;
+          });
           // Reset loading state
           setLoading(false);
           setLoadingStatus("Panel is thinking...");
@@ -1604,7 +1724,7 @@ export default function App() {
         // setActiveEntryId(null);
       }
     },
-    [clearEntryStatus, loading, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
+    [clearEntryStatus, loading, preparedPanelists, sanitizedProviderKeys, saveMessageToServer, setEntryStatus, threadId]
   );
 
   const handleContinueDebate = useCallback(
@@ -1672,19 +1792,24 @@ export default function App() {
             onDebatePaused: (result) => {
               setEntryStatus(entryId, "Paused for review");
               // Still paused - waiting for next round
-              setConversations((prev) => ({
-                ...prev,
-                [threadId]: prev[threadId]?.map((e) =>
-                  e.id === entryId
-                    ? {
-                        ...e,
-                        panel_responses: result.panel_responses || e.panel_responses,
-                        debate_paused: true,
-                        usage: result.usage || e.usage,
-                      }
-                    : e
-                ) ?? [],
-              }));
+              setConversations((prev) => {
+                const updated = {
+                  ...prev,
+                  [threadId]: prev[threadId]?.map((e) =>
+                    e.id === entryId
+                      ? {
+                          ...e,
+                          panel_responses: result.panel_responses || e.panel_responses,
+                          debate_paused: true,
+                          usage: result.usage || e.usage,
+                        }
+                      : e
+                  ) ?? [],
+                };
+                const saved = updated[threadId]?.find((e) => e.id === entryId);
+                if (saved) saveMessageToServer(threadId, saved);
+                return updated;
+              });
               // Clear loading state when debate pauses, but keep activeEntryId
               // so the user input area at the bottom shows correctly
               setLoading(false);
@@ -1695,20 +1820,25 @@ export default function App() {
             onResult: (result) => {
               clearEntryStatus(entryId);
               // Debate complete - got final summary
-              setConversations((prev) => ({
-                ...prev,
-                [threadId]: prev[threadId]?.map((e) =>
-                  e.id === entryId
-                    ? {
-                        ...e,
-                        summary: result.summary,
-                        panel_responses: result.panel_responses,
-                        debate_paused: false,
-                        usage: result.usage,
-                      }
-                    : e
-                ) ?? [],
-              }));
+              setConversations((prev) => {
+                const updated = {
+                  ...prev,
+                  [threadId]: prev[threadId]?.map((e) =>
+                    e.id === entryId
+                      ? {
+                          ...e,
+                          summary: result.summary,
+                          panel_responses: result.panel_responses,
+                          debate_paused: false,
+                          usage: result.usage,
+                        }
+                      : e
+                  ) ?? [],
+                };
+                const saved = updated[threadId]?.find((e) => e.id === entryId);
+                if (saved) saveMessageToServer(threadId, saved);
+                return updated;
+              });
               // Clear loading state and activeEntryId when debate is fully complete
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
@@ -1745,7 +1875,7 @@ export default function App() {
         // setActiveEntryId(null);
       }
     },
-    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
+    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, saveMessageToServer, setEntryStatus, threadId]
   );
 
   const handleExitUserDebate = useCallback(
@@ -1785,20 +1915,25 @@ export default function App() {
             onResult: (result) => {
               clearEntryStatus(entryId);
               // Debate complete - got final summary
-              setConversations((prev) => ({
-                ...prev,
-                [threadId]: prev[threadId]?.map((e) =>
-                  e.id === entryId
-                    ? {
-                        ...e,
-                        summary: result.summary,
-                        panel_responses: result.panel_responses,
-                        debate_paused: false,
-                        usage: result.usage,
-                      }
-                    : e
-                ) ?? [],
-              }));
+              setConversations((prev) => {
+                const updated = {
+                  ...prev,
+                  [threadId]: prev[threadId]?.map((e) =>
+                    e.id === entryId
+                      ? {
+                          ...e,
+                          summary: result.summary,
+                          panel_responses: result.panel_responses,
+                          debate_paused: false,
+                          usage: result.usage,
+                        }
+                      : e
+                  ) ?? [],
+                };
+                const saved = updated[threadId]?.find((e) => e.id === entryId);
+                if (saved) saveMessageToServer(threadId, saved);
+                return updated;
+              });
               setLoading(false);
               setLoadingStatus("Panel is thinking...");
               setActiveEntryId(null);
@@ -1830,7 +1965,7 @@ export default function App() {
         setActiveEntryId(null);
       }
     },
-    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, setEntryStatus, threadId]
+    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, saveMessageToServer, setEntryStatus, threadId]
   );
 
   const stopGeneration = useCallback(() => {

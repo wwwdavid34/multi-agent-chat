@@ -97,10 +97,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
           // Decode token to check expiration
           const decoded = jwtDecode<JWTPayload>(storedToken);
 
-          // Check if token is expired
+          // Check if token is expired (5-second safety margin)
           const now = Date.now() / 1000;
-          if (decoded.exp < now) {
-            // Token expired - clear it
+          if (decoded.exp < now + 5) {
+            console.warn("[Auth] Token expired or about to expire, clearing");
             localStorage.removeItem("auth_token");
             setIsLoading(false);
             return;
@@ -120,7 +120,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
             const userData = await response.json();
             setUser(userData);
           } else {
-            // Token is invalid on backend - clear everything
+            // Token is invalid on backend - log details and clear everything
+            const body = await response.text().catch(() => "(unreadable)");
+            console.warn(
+              `[Auth] /auth/me failed: status=${response.status} body=${body}`
+            );
             localStorage.removeItem("auth_token");
             setAccessToken(null);
             setUser(null);

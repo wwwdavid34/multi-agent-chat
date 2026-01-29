@@ -1,5 +1,6 @@
 """Authentication router with login, user management, and API key storage."""
 
+import json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -20,6 +21,7 @@ from auth.jwt_manager import create_access_token
 from auth.models import (
     ApiKeysRequest,
     ApiKeysResponse,
+    ConversationMessageRequest,
     GoogleTokenRequest,
     LoginResponse,
     ThreadListResponse,
@@ -96,11 +98,15 @@ async def login_with_google(
         )
 
         if user_row:
-            # Existing user - update last_login
+            # Existing user - update last_login and refresh profile from Google
             user_id = str(user_row["id"])
-            await conn.execute(
-                "UPDATE users SET last_login = NOW() WHERE id = $1",
+            user_row = await conn.fetchrow(
+                "UPDATE users SET last_login = NOW(), name = $2, picture_url = $3 "
+                "WHERE id = $1 "
+                "RETURNING id, google_id, email, name, picture_url, created_at, last_login",
                 user_row["id"],
+                name,
+                picture,
             )
             logger.info(f"User logged in: {email}")
 
@@ -438,3 +444,166 @@ async def delete_thread(
             )
 
         logger.info(f"Thread deleted: {thread_id} by user {user_id}")
+
+
+# =========================================================================
+# Conversation message storage endpoints
+# =========================================================================
+
+
+@router.get("/conversations")
+async def get_all_conversations(
+    user_id: str = Depends(require_user_id),
+    pool: asyncpg.Pool = Depends(get_db),
+):
+    """
+    Bulk load all conversations for the authenticated user.
+
+    Returns messages grouped by thread_id.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT thread_id, message_id, question, attachments, summary,
+                   panel_responses, panelists, debate_history, debate_mode,
+                   discussion_mode_id, max_debate_rounds, debate_paused,
+                   stopped, usage, tagged_panelists, created_at
+            FROM conversation_messages
+            WHERE user_id = $1
+            ORDER BY created_at ASC
+            """,
+            UUID(user_id),
+        )
+
+    conversations: dict[str, list[dict]] = {}
+    for row in rows:
+        tid = row["thread_id"]
+        msg = {
+            "message_id": row["message_id"],
+            "question": row["question"],
+            "attachments": row["attachments"] or [],
+            "summary": row["summary"],
+            "panel_responses": row["panel_responses"] or {},
+            "panelists": row["panelists"] or [],
+            "debate_history": row["debate_history"],
+            "debate_mode": row["debate_mode"],
+            "discussion_mode_id": row["discussion_mode_id"],
+            "max_debate_rounds": row["max_debate_rounds"],
+            "debate_paused": row["debate_paused"] or False,
+            "stopped": row["stopped"] or False,
+            "usage": row["usage"],
+            "tagged_panelists": row["tagged_panelists"] or [],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        }
+        conversations.setdefault(tid, []).append(msg)
+
+    return {"conversations": conversations}
+
+
+@router.get("/conversations/{thread_id}")
+async def get_thread_conversations(
+    thread_id: str,
+    user_id: str = Depends(require_user_id),
+    pool: asyncpg.Pool = Depends(get_db),
+):
+    """
+    Load messages for a single thread.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT message_id, question, attachments, summary,
+                   panel_responses, panelists, debate_history, debate_mode,
+                   discussion_mode_id, max_debate_rounds, debate_paused,
+                   stopped, usage, tagged_panelists, created_at
+            FROM conversation_messages
+            WHERE user_id = $1 AND thread_id = $2
+            ORDER BY created_at ASC
+            """,
+            UUID(user_id),
+            thread_id,
+        )
+
+    messages = []
+    for row in rows:
+        messages.append({
+            "message_id": row["message_id"],
+            "question": row["question"],
+            "attachments": row["attachments"] or [],
+            "summary": row["summary"],
+            "panel_responses": row["panel_responses"] or {},
+            "panelists": row["panelists"] or [],
+            "debate_history": row["debate_history"],
+            "debate_mode": row["debate_mode"],
+            "discussion_mode_id": row["discussion_mode_id"],
+            "max_debate_rounds": row["max_debate_rounds"],
+            "debate_paused": row["debate_paused"] or False,
+            "stopped": row["stopped"] or False,
+            "usage": row["usage"],
+            "tagged_panelists": row["tagged_panelists"] or [],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        })
+
+    return {"messages": messages}
+
+
+@router.post("/conversations/{thread_id}")
+async def upsert_conversation_message(
+    thread_id: str,
+    message: ConversationMessageRequest,
+    user_id: str = Depends(require_user_id),
+    pool: asyncpg.Pool = Depends(get_db),
+):
+    """
+    Upsert a conversation message.
+
+    Uses INSERT ... ON CONFLICT to create or update a message in a thread.
+    """
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO conversation_messages (
+                thread_id, user_id, message_id, question, attachments,
+                summary, panel_responses, panelists, debate_history,
+                debate_mode, discussion_mode_id, max_debate_rounds,
+                debate_paused, stopped, usage, tagged_panelists
+            ) VALUES (
+                $1, $2, $3, $4, $5::jsonb,
+                $6, $7::jsonb, $8::jsonb, $9::jsonb,
+                $10, $11, $12,
+                $13, $14, $15::jsonb, $16::jsonb
+            )
+            ON CONFLICT (thread_id, message_id) DO UPDATE SET
+                question = EXCLUDED.question,
+                attachments = EXCLUDED.attachments,
+                summary = EXCLUDED.summary,
+                panel_responses = EXCLUDED.panel_responses,
+                panelists = EXCLUDED.panelists,
+                debate_history = EXCLUDED.debate_history,
+                debate_mode = EXCLUDED.debate_mode,
+                discussion_mode_id = EXCLUDED.discussion_mode_id,
+                max_debate_rounds = EXCLUDED.max_debate_rounds,
+                debate_paused = EXCLUDED.debate_paused,
+                stopped = EXCLUDED.stopped,
+                usage = EXCLUDED.usage,
+                tagged_panelists = EXCLUDED.tagged_panelists
+            """,
+            thread_id,
+            UUID(user_id),
+            message.message_id,
+            message.question,
+            json.dumps(message.attachments),
+            message.summary,
+            json.dumps(message.panel_responses),
+            json.dumps(message.panelists),
+            json.dumps(message.debate_history) if message.debate_history is not None else None,
+            message.debate_mode,
+            message.discussion_mode_id,
+            message.max_debate_rounds,
+            message.debate_paused,
+            message.stopped,
+            json.dumps(message.usage) if message.usage is not None else None,
+            json.dumps(message.tagged_panelists),
+        )
+
+    return {"status": "ok"}

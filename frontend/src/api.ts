@@ -264,6 +264,59 @@ export async function generateTitle(firstMessage: string): Promise<string> {
   }
 }
 
+// ============================================================================
+// Conversation persistence (PostgreSQL storage)
+// ============================================================================
+
+/**
+ * Load all conversations for the authenticated user from the server.
+ * Returns a map of thread_id -> messages.
+ */
+export async function loadAllConversations(): Promise<Record<string, any[]>> {
+  const token = localStorage.getItem("auth_token");
+  if (!token) return {};
+
+  const res = await fetch(`${API_BASE_URL}/auth/conversations`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    console.warn("[Conversations] Failed to load:", res.status, res.statusText);
+    return {};
+  }
+
+  const data = await res.json();
+  return data.conversations ?? {};
+}
+
+/**
+ * Save a single conversation message to the server.
+ * Best-effort: errors are caught and logged, never thrown.
+ */
+export async function saveConversationMessage(
+  threadId: string,
+  message: Record<string, unknown>
+): Promise<void> {
+  try {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return; // guest — skip
+
+    await fetch(
+      `${API_BASE_URL}/auth/conversations/${encodeURIComponent(threadId)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(message),
+      }
+    );
+  } catch (err) {
+    console.warn("[Conversations] Failed to save message:", err);
+  }
+}
+
 /**
  * Stream-based decision assistant API call with real-time phase updates
  */

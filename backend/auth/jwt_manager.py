@@ -1,6 +1,8 @@
 """JWT token creation and validation."""
 
+import logging
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -9,6 +11,8 @@ from fastapi import HTTPException, status
 
 from auth.models import TokenPayload
 
+logger = logging.getLogger(__name__)
+
 
 class JWTError(Exception):
     """Custom exception for JWT errors."""
@@ -16,8 +20,12 @@ class JWTError(Exception):
     pass
 
 
+_secret_logged = False
+
+
 def get_jwt_secret() -> str:
     """Get JWT secret key from environment."""
+    global _secret_logged
     secret = os.getenv("JWT_SECRET_KEY")
     if not secret:
         raise JWTError(
@@ -29,6 +37,9 @@ def get_jwt_secret() -> str:
             "JWT_SECRET_KEY is too short (minimum 32 characters). "
             "Generate a new one with: openssl rand -hex 32"
         )
+    if not _secret_logged:
+        logger.info("JWT secret key loaded (length=%d)", len(secret))
+        _secret_logged = True
     return secret
 
 
@@ -55,14 +66,17 @@ def create_access_token(
         # Default: 7 days
         expires_delta = timedelta(days=7)
 
-    now = datetime.utcnow()
-    expire = now + expires_delta
+    # Use time.time() for correct UTC epoch seconds.
+    # datetime.utcnow().timestamp() is WRONG: it returns a naive datetime
+    # but .timestamp() interprets it as local time, shifting iat into the future.
+    now_epoch = int(time.time())
+    expire_epoch = now_epoch + int(expires_delta.total_seconds())
 
     payload = {
         "user_id": user_id,
         "email": email,
-        "exp": int(expire.timestamp()),
-        "iat": int(now.timestamp()),
+        "exp": expire_epoch,
+        "iat": now_epoch,
     }
 
     try:
@@ -98,6 +112,7 @@ def verify_access_token(token: str) -> TokenPayload:
             secret,
             algorithms=["HS256"],
             options={"require": ["exp", "iat"]},
+            leeway=10,  # 10-second tolerance for clock skew
         )
 
         # Validate required fields
@@ -111,24 +126,28 @@ def verify_access_token(token: str) -> TokenPayload:
         return TokenPayload(**payload)
 
     except jwt.ExpiredSignatureError:
+        logger.warning("JWT verify failed: token expired (prefix=%s…)", token[:8])
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired. Please log in again.",
         )
 
     except jwt.InvalidTokenError as e:
+        logger.warning("JWT verify failed: invalid token (prefix=%s…): %s", token[:8], e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}",
         )
 
     except JWTError as e:
+        logger.error("JWT verify failed: config error: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
 
     except Exception as e:
+        logger.error("JWT verify failed: unexpected error (prefix=%s…): %s", token[:8], e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Token verification failed: {str(e)}",
