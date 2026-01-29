@@ -783,6 +783,9 @@ export default function App() {
     conversationsRef.current = conversations;
   }, [conversations]);
 
+  // Guard: don't persist conversations to localStorage until restore is complete
+  const conversationsRestoredRef = useRef(false);
+
   /**
    * Save a message entry to the server (no-op for guests).
    * Best-effort — errors are logged, never thrown.
@@ -928,7 +931,7 @@ export default function App() {
   }, [isAuthenticated, accessToken, threads, migrateThreads]);
 
   useEffect(() => {
-    if (isAuthenticated && user) {
+    if (isAuthenticated && user && conversationsRestoredRef.current) {
       const data = JSON.stringify(conversations);
       localStorage.setItem("conversations", data);
       localStorage.setItem(`conversations_${user.id}`, data);
@@ -939,6 +942,7 @@ export default function App() {
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       // Guest mode: start with clean slate
+      conversationsRestoredRef.current = false;
       setThreadId(DEFAULT_THREAD_ID);
       setThreads([DEFAULT_THREAD_ID]);
       setConversations({ [DEFAULT_THREAD_ID]: [] });
@@ -1040,6 +1044,9 @@ export default function App() {
         } catch (err) {
           console.error("[Thread Restore] Failed to restore threads:", err);
         }
+
+        // Allow the persist effect to write now that restore is complete
+        conversationsRestoredRef.current = true;
       }
     };
     restoreThreads();
