@@ -1351,6 +1351,9 @@ export default function App() {
         [threadId]: [...(prev[threadId] ?? []), optimisticEntry],
       }));
 
+      // Persist question to server immediately (before streaming starts)
+      saveMessageToServer(threadId, optimisticEntry);
+
       // Handle preset panelists for modes like Business Validation
       const modeConfig = discussionModeId ? getModeConfig(discussionModeId) : undefined;
 
