@@ -28,8 +28,9 @@ RUN apt-get update && apt-get install -y \
 COPY backend/pyproject.toml ./
 COPY backend/*.py ./
 COPY backend/routers ./routers
-COPY backend/debate ./debate
+COPY backend/decision ./decision
 COPY backend/auth ./auth
+COPY backend/migrations ./migrations
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e .
