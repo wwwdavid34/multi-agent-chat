@@ -69,3 +69,7 @@ class DecisionState(TypedDict, total=False):
 
     # Phase tracking
     phase: str
+
+    # Multi-provider expert distribution
+    available_models: list[dict[str, str]]   # [{"provider": "openai", "model": "gpt-4o"}, ...]
+    provider_keys: dict[str, str]            # {"openai": "sk-...", "claude": "sk-ant-..."}

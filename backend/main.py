@@ -136,6 +136,8 @@ class DecisionRequest(BaseModel):
     max_iterations: int = 2
     resume: bool = False
     human_feedback: dict | None = None
+    panelists: list[PanelistConfig] | None = None
+    provider_keys: dict[str, str] | None = None
 
 
 @app.get("/health")
@@ -602,12 +604,24 @@ async def get_thread_usage(thread_id: str):
     }
 
 
+# Cached decision graph — reuse across requests so the InMemorySaver
+# checkpointer persists and resume (human-gate feedback) works correctly.
+_decision_graph = None
+
+
+def _get_decision_graph():
+    global _decision_graph
+    if _decision_graph is None:
+        _decision_graph = build_decision_graph()
+    return _decision_graph
+
+
 @app.post("/decision-stream")
 async def decision_stream(req: DecisionRequest, request: Request):
     """Stream a decision assistant session via SSE."""
     async def event_generator():
         try:
-            graph = build_decision_graph()
+            graph = _get_decision_graph()
             config = {"configurable": {"thread_id": req.thread_id}}
 
             if req.resume and req.human_feedback:
@@ -618,6 +632,24 @@ async def decision_stream(req: DecisionRequest, request: Request):
                     stream_mode="updates",
                 )
             else:
+                # Build list of tool-capable models for expert distribution
+                tool_capable_providers = {"openai", "claude", "gemini"}
+                available_models: list[dict[str, str]] = []
+                if req.panelists:
+                    seen: set[tuple[str, str]] = set()
+                    for p in req.panelists:
+                        if p.provider in tool_capable_providers:
+                            key = (p.provider, p.model)
+                            if key not in seen:
+                                seen.add(key)
+                                available_models.append({"provider": p.provider, "model": p.model})
+                if available_models:
+                    logger.info(
+                        "Decision: distributing experts across %d model(s): %s",
+                        len(available_models),
+                        [f"{m['provider']}/{m['model']}" for m in available_models],
+                    )
+
                 initial_state = {
                     "user_question": req.question,
                     "constraints": req.constraints or {},
@@ -625,6 +657,8 @@ async def decision_stream(req: DecisionRequest, request: Request):
                     "max_iterations": req.max_iterations,
                     "phase": "planning",
                     "expert_outputs": {},
+                    "available_models": available_models,
+                    "provider_keys": req.provider_keys or {},
                 }
                 stream = graph.astream(
                     initial_state,
@@ -635,12 +669,25 @@ async def decision_stream(req: DecisionRequest, request: Request):
             async for event in stream:
                 for node_name, node_output in event.items():
                     if node_name == "__interrupt__":
-                        yield f"data: {json.dumps({'type': 'awaiting_input', 'data': node_output})}\n\n"
+                        # node_output is a list of langgraph Interrupt objects;
+                        # extract .value from each so the payload is JSON-serializable.
+                        if isinstance(node_output, list):
+                            interrupt_data = [
+                                getattr(item, "value", item) if not isinstance(item, dict) else item
+                                for item in node_output
+                            ]
+                        else:
+                            interrupt_data = (
+                                getattr(node_output, "value", node_output)
+                                if not isinstance(node_output, dict)
+                                else node_output
+                            )
+                        yield f"data: {json.dumps({'type': 'awaiting_input', 'data': interrupt_data}, default=str)}\n\n"
                         continue
 
                     if node_name == "planner":
                         yield f"data: {json.dumps({'type': 'phase_update', 'phase': 'planning'})}\n\n"
-                        yield f"data: {json.dumps({'type': 'options_identified', 'options': node_output.get('decision_options', []), 'expert_tasks': node_output.get('expert_tasks', [])})}\n\n"
+                        yield f"data: {json.dumps({'type': 'options_identified', 'options': node_output.get('decision_options', []), 'expert_tasks': node_output.get('expert_tasks', [])}, default=str)}\n\n"
                     elif node_name == "run_expert":
                         outputs = node_output.get("expert_outputs", {})
                         for role, output in outputs.items():

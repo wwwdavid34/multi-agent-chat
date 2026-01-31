@@ -1,13 +1,17 @@
-import React, { ReactNode, useState, useEffect } from "react";
+import { ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { DebateMode } from "../types";
+import {
+  type DiscussionModeId,
+  getModeConfig,
+  getModeIconPath,
+} from "../lib/discussionModes";
 
 interface RegenerateModalProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (debateMode: DebateMode | undefined, maxDebateRounds: number) => void;
-  defaultDebateMode?: DebateMode;
-  defaultMaxRounds?: number;
+  onConfirm: (modeId: DiscussionModeId) => void;
+  /** The locked mode for this conversation */
+  modeId?: DiscussionModeId;
   title?: string;
   subtitle?: string;
   confirmLabel?: string;
@@ -15,31 +19,44 @@ interface RegenerateModalProps {
   confirmIcon?: ReactNode;
 }
 
+function ModeIcon({
+  icon,
+  className = "w-4 h-4",
+}: {
+  icon: string;
+  className?: string;
+}) {
+  const path = getModeIconPath(icon);
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={path} />
+    </svg>
+  );
+}
+
 export function RegenerateModal({
   open,
   onClose,
   onConfirm,
-  defaultDebateMode,
-  defaultMaxRounds = 3,
+  modeId = "panel",
   title = "Regenerate Response",
-  subtitle = "Choose settings for this regeneration",
+  subtitle = "Re-run this question with the same mode",
   confirmLabel = "Regenerate",
   headerIcon,
   confirmIcon,
 }: RegenerateModalProps) {
-  const [debateMode, setDebateMode] = useState<DebateMode | undefined>(defaultDebateMode);
-  const [maxDebateRounds, setMaxDebateRounds] = useState(defaultMaxRounds);
-
-  // Reset state when modal opens with new defaults
-  useEffect(() => {
-    if (open) {
-      setDebateMode(defaultDebateMode);
-      setMaxDebateRounds(defaultMaxRounds);
-    }
-  }, [open, defaultDebateMode, defaultMaxRounds]);
+  const modeConfig = getModeConfig(modeId);
 
   const handleConfirm = () => {
-    onConfirm(debateMode, maxDebateRounds);
+    onConfirm(modeId);
     onClose();
   };
 
@@ -51,13 +68,6 @@ export function RegenerateModal({
     </svg>
   );
 
-  const modeOptions: { value: DebateMode | undefined; label: string; description: string }[] = [
-    { value: undefined, label: "Panel (No Debate)", description: "Single round of responses from all panelists" },
-    { value: "autonomous", label: "Autonomous Debate", description: "Debate runs until consensus or max rounds" },
-    { value: "supervised", label: "Supervised Debate", description: "Pause after each round for review" },
-    { value: "participatory", label: "Participatory Debate", description: "Pause for your input each round" },
-  ];
-
   return (
     <AnimatePresence>
       <motion.div
@@ -68,7 +78,7 @@ export function RegenerateModal({
         onClick={onClose}
       >
         <motion.div
-          className="bg-background text-foreground rounded-2xl shadow-2xl max-w-md w-full border border-border"
+          className="bg-background text-foreground rounded-2xl shadow-2xl max-w-sm w-full border border-border"
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.9, opacity: 0 }}
@@ -96,86 +106,19 @@ export function RegenerateModal({
             </button>
           </div>
 
-          {/* Content */}
-          <div className="p-6 space-y-5">
-            {/* Debate Mode Selection */}
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold m-0">Mode</h4>
-              <div className="space-y-2">
-                {modeOptions.map((option) => (
-                  <label
-                    key={option.label}
-                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                      debateMode === option.value
-                        ? "border-accent bg-accent/5"
-                        : "border-border hover:bg-muted/50"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="debateMode"
-                      checked={debateMode === option.value}
-                      onChange={() => setDebateMode(option.value)}
-                      className="mt-0.5 accent-accent"
-                    />
-                    <div>
-                      <div className="text-sm font-medium">{option.label}</div>
-                      <div className="text-xs text-muted-foreground">{option.description}</div>
-                    </div>
-                  </label>
-                ))}
+          {/* Content — show current mode info */}
+          <div className="p-6">
+            {modeConfig && (
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-accent/30 bg-accent/5">
+                <div className="w-8 h-8 rounded-lg bg-accent/20 text-accent flex items-center justify-center flex-shrink-0">
+                  <ModeIcon icon={modeConfig.icon} className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium">{modeConfig.name}</div>
+                  <div className="text-xs text-muted-foreground">{modeConfig.description}</div>
+                </div>
               </div>
-            </div>
-
-            {/* Max Debate Rounds (only shown when debate mode is enabled) */}
-            <AnimatePresence>
-              {debateMode && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="rounded-lg border border-border p-4 bg-card overflow-hidden"
-                >
-                  <label className="block">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <h4 className="text-sm font-semibold m-0">Maximum Debate Rounds</h4>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Limit debate iterations (1-10 rounds)
-                        </p>
-                      </div>
-                      <span className="text-lg font-bold text-accent">{maxDebateRounds}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="10"
-                      value={maxDebateRounds}
-                      onChange={(e) => setMaxDebateRounds(Number(e.target.value))}
-                      className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-accent"
-                    />
-                    <div className="flex justify-between text-xs text-muted-foreground mt-2">
-                      <span>1 round</span>
-                      <span>10 rounds</span>
-                    </div>
-                  </label>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Info box */}
-            <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
-              <p className="text-xs text-muted-foreground m-0">
-                {debateMode === undefined
-                  ? "The panel will provide immediate responses without debate."
-                  : debateMode === "autonomous"
-                  ? `The panel will debate for up to ${maxDebateRounds} round${maxDebateRounds > 1 ? 's' : ''} or until consensus is reached.`
-                  : debateMode === "supervised"
-                  ? `Debate will pause after each round for you to review. Up to ${maxDebateRounds} rounds.`
-                  : `You can add input and @mention panelists each round. Up to ${maxDebateRounds} rounds.`}
-              </p>
-            </div>
+            )}
           </div>
 
           {/* Footer */}

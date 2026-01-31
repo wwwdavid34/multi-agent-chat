@@ -1,53 +1,5 @@
 export type PanelResponses = Record<string, string>;
 
-export interface ScoreEvent {
-  category: string;
-  points: number;
-  reason: string;
-}
-
-export interface RoundScore {
-  panelist_name: string;
-  round_number: number;
-  events: ScoreEvent[];
-  round_total: number;
-  cumulative_total: number;
-}
-
-export interface StanceData {
-  panelist_name: string;
-  stance: string;
-  core_claim: string;
-  confidence: number;
-  changed_from_previous: boolean;
-  change_explanation?: string;
-}
-
-export interface DebateRound {
-  round_number: number;
-  panel_responses: PanelResponses;
-  consensus_reached: boolean;
-  user_message?: string;
-  stances?: Record<string, StanceData>;
-  scores?: Record<string, RoundScore>;
-}
-
-export type StanceMode = "free" | "adversarial" | "assigned";
-
-// Debate mode controls how the debate runs
-// - autonomous: runs without pauses until consensus or max_rounds
-// - supervised: pauses each round for user to review/vote
-// - participatory: pauses each round for user input
-export type DebateMode = "autonomous" | "supervised" | "participatory";
-
-export interface AssignedRole {
-  panelist_name: string;
-  // PRO = argue FOR, CON = argue AGAINST, DEVIL_ADVOCATE = neutral critic (challenges both sides)
-  role: "PRO" | "CON" | "DEVIL_ADVOCATE";
-  position_statement: string;
-  constraints: string[];
-}
-
 export type LLMProvider = "openai" | "gemini" | "claude" | "grok";
 
 export interface ProviderModel {
@@ -87,8 +39,6 @@ export interface AskResponse {
   thread_id: string;
   summary: string;
   panel_responses: PanelResponses;
-  debate_history?: DebateRound[];
-  debate_paused?: boolean;
   usage?: TokenUsage;
 }
 
@@ -98,16 +48,6 @@ export interface AskRequestBody {
   attachments?: string[];
   panelists?: PanelistConfigPayload[];
   provider_keys?: ProviderKeyMap;
-  // Debate mode: "autonomous" | "supervised" | "participatory" | undefined (no debate)
-  debate_mode?: DebateMode;
-  max_debate_rounds?: number;
-  continue_debate?: boolean;
-  tagged_panelists?: string[];  // @mentioned panelist names
-  user_message?: string;  // User's message to inject (participatory mode)
-  exit_debate?: boolean;  // User wants to end the debate early
-  // Adversarial role assignment
-  stance_mode?: StanceMode;
-  assigned_roles?: Record<string, AssignedRole>;
   // Custom personas for preset mode panelists (name -> persona)
   preset_personas?: Record<string, string>;
   // Custom moderator prompt for report consolidation
@@ -168,6 +108,8 @@ export interface DecisionRequestBody {
   max_iterations?: number;
   resume?: boolean;
   human_feedback?: HumanFeedback;
+  panelists?: PanelistConfigPayload[];
+  provider_keys?: ProviderKeyMap;
 }
 
 export type DecisionPhase = "planning" | "analysis" | "conflict" | "human" | "synthesis" | "done";

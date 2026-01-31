@@ -5,19 +5,14 @@
  * This is the single source of truth for mode configuration across the app.
  */
 
-import type { DebateMode, DebateRole } from "../types";
+import type { DebateRole } from "../types";
 
 export type DiscussionModeId =
   | "panel"
-  | "autonomous"
-  | "supervised"
-  | "participatory"
   | "business-validation"
   | "decision";
 
-export type ModeCategory = "QUICK" | "STRUCTURED" | "RESEARCH";
-export type StanceMode = "free" | "adversarial" | "assigned";
-
+export type ModeCategory = "QUICK" | "RESEARCH" | "DECISION";
 export interface PresetPanelist {
   name: string;
   persona: string;
@@ -32,15 +27,10 @@ export interface DiscussionModeConfig {
   description: string;
   category: ModeCategory;
   icon: string; // SVG path or emoji
-  /** Maps to backend debate_mode field (undefined = no debate, just panel responses) */
-  debateMode: DebateMode | undefined;
   defaultRounds: number;
-  showRoundsConfig: boolean;
   /** If true, mode provides preset panelists that override user's panelists */
   overrideUserPanelists: boolean;
   presetPanelists?: PresetPanelist[];
-  /** Stance assignment mode for debates */
-  stanceMode?: StanceMode;
   /** Custom moderator prompt for report consolidation */
   moderatorPrompt?: string;
   /** If true, this mode uses the decision assistant endpoint instead of the panel/debate flow */
@@ -57,54 +47,11 @@ export const DISCUSSION_MODES: DiscussionModeConfig[] = [
     id: "panel",
     name: "Panel Discussion",
     shortName: "Panel",
-    description: "Single round of responses from all panelists",
+    description: "Quick responses from all panelists with a consolidated summary",
     category: "QUICK",
     icon: "lightning",
-    debateMode: undefined,
     defaultRounds: 1,
-    showRoundsConfig: false,
     overrideUserPanelists: false,
-  },
-
-  // STRUCTURED - Multi-round debates with different control levels
-  {
-    id: "autonomous",
-    name: "Autonomous Debate",
-    shortName: "Auto",
-    description: "Runs until consensus or max rounds",
-    category: "STRUCTURED",
-    icon: "robot",
-    debateMode: "autonomous",
-    defaultRounds: 3,
-    showRoundsConfig: true,
-    overrideUserPanelists: false,
-    stanceMode: "adversarial",
-  },
-  {
-    id: "supervised",
-    name: "Supervised Debate",
-    shortName: "Supervised",
-    description: "Pause after each round for review",
-    category: "STRUCTURED",
-    icon: "eye",
-    debateMode: "supervised",
-    defaultRounds: 3,
-    showRoundsConfig: true,
-    overrideUserPanelists: false,
-    stanceMode: "adversarial",
-  },
-  {
-    id: "participatory",
-    name: "Participatory Debate",
-    shortName: "Participatory",
-    description: "Add your input each round",
-    category: "STRUCTURED",
-    icon: "hand",
-    debateMode: "participatory",
-    defaultRounds: 5,
-    showRoundsConfig: true,
-    overrideUserPanelists: false,
-    stanceMode: "adversarial",
   },
 
   // RESEARCH - Specialized preset panels for specific use cases
@@ -115,11 +62,8 @@ export const DISCUSSION_MODES: DiscussionModeConfig[] = [
     description: "Expert panel researches and validates your business idea",
     category: "RESEARCH",
     icon: "briefcase",
-    debateMode: undefined, // No debate - independent research then consolidation
     defaultRounds: 1,
-    showRoundsConfig: false,
     overrideUserPanelists: true,
-    stanceMode: "free",
     moderatorPrompt: `You are a Senior Business Analyst consolidating expert research into a formal validation report.
 
 Respond in the same language the user used.
@@ -388,17 +332,15 @@ Produce a research report with these sections:
     ],
   },
 
-  // STRUCTURED - Decision Assistant (uses separate decision endpoint)
+  // DECISION - Multi-expert structured analysis
   {
     id: "decision",
-    name: "Decision Assistant",
+    name: "Decision Support",
     shortName: "Decision",
     description: "Multi-expert analysis with conflict detection and structured recommendations",
-    category: "STRUCTURED",
+    category: "DECISION",
     icon: "scale",
-    debateMode: undefined, // Not a debate — uses /decision-stream endpoint
     defaultRounds: 1,
-    showRoundsConfig: false,
     overrideUserPanelists: false,
     isDecisionMode: true,
   },
@@ -409,8 +351,8 @@ Produce a research report with these sections:
  */
 export const MODES_BY_CATEGORY: Record<ModeCategory, DiscussionModeConfig[]> = {
   QUICK: DISCUSSION_MODES.filter((m) => m.category === "QUICK"),
-  STRUCTURED: DISCUSSION_MODES.filter((m) => m.category === "STRUCTURED"),
   RESEARCH: DISCUSSION_MODES.filter((m) => m.category === "RESEARCH"),
+  DECISION: DISCUSSION_MODES.filter((m) => m.category === "DECISION"),
 };
 
 /**
@@ -418,8 +360,8 @@ export const MODES_BY_CATEGORY: Record<ModeCategory, DiscussionModeConfig[]> = {
  */
 export const CATEGORY_LABELS: Record<ModeCategory, string> = {
   QUICK: "Quick",
-  STRUCTURED: "Structured",
   RESEARCH: "Research",
+  DECISION: "Decision",
 };
 
 /**
@@ -455,12 +397,6 @@ export function getModeIconPath(icon: string): string {
   const icons: Record<string, string> = {
     // Lightning bolt - quick/instant
     lightning: "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
-    // Robot - autonomous
-    robot: "M12 2a2 2 0 0 1 2 2v2h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4V4a2 2 0 0 1 2-2z M9 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z M15 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
-    // Eye - supervision
-    eye: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
-    // Raised hand - participation
-    hand: "M18 10v-4c0-1.1-.9-2-2-2s-2 .9-2 2v4h-2V5c0-1.1-.9-2-2-2s-2 .9-2 2v9l-2.3-2.3c-.4-.4-.9-.6-1.5-.6-1.1 0-2 .9-2 2 0 .5.2 1 .6 1.4l4.2 4.2c1.5 1.5 3.5 2.3 5.5 2.3H14c2.8 0 5-2.2 5-5v-5c0-1.1-.9-2-2-2s-2 .9-2 2z M14 10V4c0-1.1-.9-2-2-2s-2 .9-2 2v10",
     // Briefcase - business
     briefcase:
       "M20 7h-4V5c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2z M10 5h4v2h-4V5z",

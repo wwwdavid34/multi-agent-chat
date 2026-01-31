@@ -483,17 +483,24 @@ async def panelist_sequence_node(state: PanelState, config: Optional[RunnableCon
     runners = [_build_runner(p, provider_keys) for p in panel_configs]
 
     def _personalize_history(panelist_name: str) -> List[AnyMessage]:
-        identity = SystemMessage(
-            content=(
-                f"YOU ARE: {panelist_name}\n"
-                f"Other panelists: {', '.join([n for n in panelist_names if n != panelist_name])}\n\n"
-                "Name & tagging rules:\n"
-                f"- Other panelists will address you as @{panelist_name}.\n"
-                f"- If you see '@{panelist_name}' anywhere in the conversation, treat it as directed at you and respond to the claim.\n"
-                "- When addressing others, use the exact @Name shown in the panelist list.\n"
-                "- If multiple people are tagged, only respond to points relevant to you.\n"
+        if debate_mode:
+            # Debate: panelists are aware of each other and can @-tag
+            identity = SystemMessage(
+                content=(
+                    f"YOU ARE: {panelist_name}\n"
+                    f"Other panelists: {', '.join([n for n in panelist_names if n != panelist_name])}\n\n"
+                    "Name & tagging rules:\n"
+                    f"- Other panelists will address you as @{panelist_name}.\n"
+                    f"- If you see '@{panelist_name}' anywhere in the conversation, treat it as directed at you and respond to the claim.\n"
+                    "- When addressing others, use the exact @Name shown in the panelist list.\n"
+                    "- If multiple people are tagged, only respond to points relevant to you.\n"
+                )
             )
-        )
+        else:
+            # Panel mode: each panelist answers independently
+            identity = SystemMessage(
+                content=f"YOU ARE: {panelist_name}\nProvide your own independent analysis. Do not reference or address other panelists."
+            )
 
         personalized: List[AnyMessage] = [identity]
 

@@ -1,8 +1,6 @@
 import type {
   AskRequestBody,
   AskResponse,
-  DebateRound,
-  StanceData,
   DecisionRequestBody,
   DecisionPhase,
   ExpertTask,
@@ -59,11 +57,7 @@ export async function askPanelStream(
     onStatus?: (message: string) => void;
     onSearchSource?: (source: SearchSource) => void;
     onPanelistResponse?: (panelist: string, response: string) => void;
-    onDebateRound?: (round: DebateRound) => void;
-    onStanceExtracted?: (panelist: string, stance: StanceData) => void;
-    onRolesAssigned?: (roles: Record<string, string>) => void;
     onResult?: (result: AskResponse) => void;
-    onDebatePaused?: (result: Partial<AskResponse>) => void;
     onError?: (error: Error) => void;
   },
   signal?: AbortSignal
@@ -117,31 +111,11 @@ export async function askPanelStream(
               });
             } else if (event.type === "panelist_response" && callbacks.onPanelistResponse) {
               callbacks.onPanelistResponse(event.panelist, event.response);
-            } else if (event.type === "debate_round" && callbacks.onDebateRound) {
-              callbacks.onDebateRound(event.round);
-            } else if (event.type === "stance_extracted" && callbacks.onStanceExtracted) {
-              callbacks.onStanceExtracted(event.panelist, {
-                panelist_name: event.panelist,
-                stance: event.stance,
-                confidence: event.confidence,
-                changed_from_previous: event.changed,
-                core_claim: event.core_claim || "",
-              });
-            } else if (event.type === "roles_assigned" && callbacks.onRolesAssigned) {
-              callbacks.onRolesAssigned(event.roles);
-            } else if (event.type === "debate_paused" && callbacks.onDebatePaused) {
-              callbacks.onDebatePaused({
-                thread_id: event.thread_id,
-                panel_responses: event.panel_responses,
-                debate_history: event.debate_history,
-                usage: event.usage,
-              });
             } else if (event.type === "result" && callbacks.onResult) {
               callbacks.onResult({
                 thread_id: event.thread_id,
                 summary: event.summary,
                 panel_responses: event.panel_responses,
-                debate_history: event.debate_history,
                 usage: event.usage,
               });
             } else if (event.type === "error" && callbacks.onError) {

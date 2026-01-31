@@ -1,7 +1,17 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Markdown } from "./Markdown";
-import type { DebateRound, PanelistConfigPayload } from "../types";
+import type { PanelistConfigPayload, PanelResponses } from "../types";
+
+// DebateRound defined locally — this component is unused (debate system removed)
+interface DebateRound {
+  round_number: number;
+  panel_responses: PanelResponses;
+  consensus_reached: boolean;
+  user_message?: string;
+  stances?: Record<string, unknown>;
+  scores?: Record<string, unknown>;
+}
 import { PROVIDER_LABELS } from "../lib/modelProviders";
 import { DebateScoreboard } from "./DebateScoreboard";
 import { StanceIndicator } from "./StanceIndicator";

@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { askPanel, askPanelStream, decisionStream, fetchInitialKeys, fetchStorageInfo, generateTitle, loadAllConversations, saveConversationMessage } from "./api";
 import { Markdown } from "./components/Markdown";
 import { PanelConfigurator } from "./components/PanelConfigurator";
-import { DebateViewer } from "./components/DebateViewer";
 import { DecisionViewer } from "./components/DecisionViewer";
 import { RegenerateModal } from "./components/RegenerateModal";
 import { ModeSelector } from "./components/ModeSelector";
@@ -22,8 +21,6 @@ import { UserMenu } from "./components/auth/UserMenu";
 import type {
   AskResponse,
   Conflict,
-  DebateMode,
-  DebateRound,
   DecisionPhase,
   ExpertOutput,
   ExpertTask,
@@ -50,16 +47,10 @@ interface MessageEntry {
   panel_responses: PanelResponses;
   panelists: PanelistConfigPayload[]; // Store panelist configs to show model info
   expanded: boolean;
-  debate_history?: DebateRound[]; // Debate rounds if debate mode was used
-  // Debate mode: "autonomous" | "supervised" | "participatory" | undefined
-  debate_mode?: DebateMode;
-  // Discussion mode ID for display (e.g., "business-validation", "autonomous")
+  // Discussion mode ID — locked per conversation after first message
   discussion_mode_id?: DiscussionModeId;
-  max_debate_rounds?: number; // Max rounds configured for this exchange
-  debate_paused?: boolean; // Whether debate is paused waiting for user to continue
   stopped?: boolean; // Whether generation was stopped by user
   usage?: TokenUsage; // Token usage statistics for this exchange
-  tagged_panelists?: string[]; // @mentioned panelist names
 }
 
 const parseJSON = <T,>(value: string | null, fallback: T): T => {
@@ -69,6 +60,34 @@ const parseJSON = <T,>(value: string | null, fallback: T): T => {
     return fallback;
   }
 };
+
+/** Safely coerce a value to an array — handles JSONB double-encoding from server. */
+function ensureArray(val: unknown): any[] {
+  if (Array.isArray(val)) return val;
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Safely coerce a value to a plain object — handles JSONB double-encoding from server. */
+function ensureObject(val: unknown): Record<string, any> {
+  if (val && typeof val === "object" && !Array.isArray(val)) return val as Record<string, any>;
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
 
 // Delete a thread from the backend (for authenticated users)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:8000`;
@@ -100,10 +119,6 @@ const MODERATOR_PANELIST: PanelistConfigPayload = {
   provider: "openai",
   model: "gpt-4o-mini",
 };
-// Debate mode: undefined = no debate, "autonomous" | "supervised" | "participatory"
-const DEFAULT_DEBATE_MODE: DebateMode | undefined = undefined;
-const DEFAULT_MAX_DEBATE_ROUNDS = 3;
-
 const createPanelist = (existingPanelists: PanelistConfigPayload[]): PanelistConfigPayload => ({
   id: `panelist-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
   name: "ChatGPT", // Will be updated with unique suffix if needed
@@ -123,7 +138,6 @@ const MessageBubble = memo(function MessageBubble({
   onCopy,
   onDelete,
   onRegenerate,
-  onContinueDebate,
   containerWidth,
 }: {
   entry: MessageEntry;
@@ -137,7 +151,6 @@ const MessageBubble = memo(function MessageBubble({
   onCopy?: (text: string) => void;
   onDelete?: () => void;
   onRegenerate?: () => void;
-  onContinueDebate?: () => void;
   containerWidth?: number;
 }) {
   const [viewMode, setViewMode] = React.useState<"list" | "grid">("list");
@@ -223,28 +236,6 @@ const MessageBubble = memo(function MessageBubble({
                     Stopped
                   </span>
                 </div>
-              ) : entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (
-                (() => {
-                  const modeConfig = entry.discussion_mode_id ? getModeConfig(entry.discussion_mode_id) : null;
-                  const modeName = modeConfig?.shortName ?? "Debate";
-                  return (
-                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/30">
-                      <svg viewBox="0 0 24 24" className="w-3 h-3 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        <path d="M8 10h.01M12 10h.01M16 10h.01" />
-                      </svg>
-                      <span className="text-[10px] font-semibold text-accent uppercase tracking-wide">
-                        {modeName}
-                      </span>
-                      <span className="text-[10px] text-accent/70">
-                        {entry.debate_history.length} round{entry.debate_history.length !== 1 ? 's' : ''}
-                        {entry.debate_history[entry.debate_history.length - 1]?.consensus_reached &&
-                          <span className="ml-1">• Consensus ✓</span>
-                        }
-                      </span>
-                    </div>
-                  );
-                })()
               ) : (
                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 border border-border/40">
                   <svg viewBox="0 0 24 24" className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="2">
@@ -319,7 +310,7 @@ const MessageBubble = memo(function MessageBubble({
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
-          {entry.summary || entry.debate_paused ? (
+          {entry.summary ? (
             <>
               {entry.stopped ? (
                 <div className="flex items-center gap-2 text-muted-foreground py-2">
@@ -328,32 +319,14 @@ const MessageBubble = memo(function MessageBubble({
                   </svg>
                   <span className="text-sm italic">{entry.summary}</span>
                 </div>
-              ) : entry.summary ? (
+              ) : (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   <Markdown content={entry.summary} />
                 </div>
-              ) : (
-                <div className="flex items-center gap-2 text-muted-foreground py-2">
-                  <svg viewBox="0 0 24 24" className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 8v4l3 3" />
-                    <circle cx="12" cy="12" r="9" />
-                  </svg>
-                  <span className="text-sm italic">Debate paused for review.</span>
-                </div>
               )}
 
-              {!entry.stopped && entry.debate_mode && entry.debate_history && entry.debate_history.length > 0 ? (
-                <DebateViewer
-                  debateHistory={entry.debate_history}
-                  panelists={entry.panelists}
-                  onCopy={onCopy}
-                  stepReview={entry.debate_mode === "supervised" || entry.debate_mode === "participatory"}
-                  debatePaused={entry.debate_paused}
-                  onContinue={onContinueDebate}
-                  tagged_panelists={entry.tagged_panelists}
-                  user_as_participant={entry.debate_mode === "participatory"}
-                />
-              ) : !entry.stopped ? (
+              {/* Show individual responses toggle — only for panel mode (not decision) */}
+              {!entry.stopped && entry.discussion_mode_id !== "decision" ? (
                 <>
                 <div className="mt-5 flex items-center gap-3">
                   <button
@@ -590,42 +563,30 @@ const MessageBubble = memo(function MessageBubble({
             </>
           ) : (
             <div className="flex flex-col gap-2">
-              {/* Discussion mode indicator when loading */}
-              {entry.debate_mode && (
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/30 w-fit">
-                  <svg viewBox="0 0 24 24" className="w-3 h-3 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    <path d="M8 10h.01M12 10h.01M16 10h.01" />
-                  </svg>
-                  <span className="text-[10px] font-semibold text-accent uppercase tracking-wide">
-                    {getModeConfig(entry.discussion_mode_id)?.shortName ?? "Debate"}
-                  </span>
-                </div>
-              )}
               <div className="flex items-center gap-3">
                 <motion.div
-                  className={`flex gap-1.5 ${entry.debate_mode ? 'text-accent' : ''}`}
+                  className="flex gap-1.5"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.3 }}
                 >
                   <motion.div
-                    className={`w-2 h-2 rounded-full ${entry.debate_mode ? 'bg-accent/40' : 'bg-muted-foreground/40'}`}
+                    className="w-2 h-2 rounded-full bg-muted-foreground/40"
                     animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
                     transition={{ duration: 1.2, repeat: Infinity, delay: 0 }}
                   />
                   <motion.div
-                    className={`w-2 h-2 rounded-full ${entry.debate_mode ? 'bg-accent/40' : 'bg-muted-foreground/40'}`}
+                    className="w-2 h-2 rounded-full bg-muted-foreground/40"
                     animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
                     transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }}
                   />
                   <motion.div
-                    className={`w-2 h-2 rounded-full ${entry.debate_mode ? 'bg-accent/40' : 'bg-muted-foreground/40'}`}
+                    className="w-2 h-2 rounded-full bg-muted-foreground/40"
                     animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.8, 0.4] }}
                     transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }}
                   />
                 </motion.div>
-                <span className={`text-[13px] ${entry.debate_mode ? 'text-accent/70' : 'text-muted-foreground/60'}`}>{displayStatus}</span>
+                <span className="text-[13px] text-muted-foreground/60">{displayStatus}</span>
               </div>
               {statusTrailText && (
                 <div className="text-[11px] text-muted-foreground/50 pl-7">
@@ -729,12 +690,9 @@ export default function App() {
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [statusByEntryId, setStatusByEntryId] = useState<Record<string, string>>({});
   const [statusTrailByEntryId, setStatusTrailByEntryId] = useState<Record<string, string[]>>({});
-  const [liveStances, setLiveStances] = useState<Record<string, { stance: string; confidence: number; changed?: boolean }>>({});
-  const [assignedRoles, setAssignedRoles] = useState<Record<string, string>>({});
   const [searchSources, setSearchSources] = useState<Array<{ url: string; title: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const [debateUserInput, setDebateUserInput] = useState<string>(""); // User input for debate participation
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [storageInfo, setStorageInfo] = useState<{
     mode: string;
@@ -801,14 +759,9 @@ export default function App() {
         summary: rest.summary ?? null,
         panel_responses: rest.panel_responses,
         panelists: rest.panelists,
-        debate_history: rest.debate_history ?? null,
-        debate_mode: rest.debate_mode ?? null,
         discussion_mode_id: rest.discussion_mode_id ?? null,
-        max_debate_rounds: rest.max_debate_rounds ?? null,
-        debate_paused: rest.debate_paused ?? false,
         stopped: rest.stopped ?? false,
         usage: rest.usage ?? null,
-        tagged_panelists: rest.tagged_panelists ?? [],
       });
     },
     [isAuthenticated]
@@ -958,6 +911,7 @@ export default function App() {
 
         // 1. Try loading conversations from PostgreSQL first
         let serverConversationsLoaded = false;
+        let conversationThreadIds: string[] = [];
         try {
           const serverConv = await loadAllConversations();
           const serverThreadIds = Object.keys(serverConv);
@@ -968,25 +922,21 @@ export default function App() {
               normalized[tid] = (msgs as any[]).map((msg) => ({
                 id: msg.message_id,
                 question: msg.question ?? "",
-                attachments: msg.attachments ?? [],
+                attachments: ensureArray(msg.attachments),
                 summary: msg.summary ?? "",
-                panel_responses: msg.panel_responses ?? {},
-                panelists: msg.panelists ?? [],
+                panel_responses: ensureObject(msg.panel_responses),
+                panelists: ensureArray(msg.panelists),
                 expanded: false,
-                debate_history: msg.debate_history ?? undefined,
-                debate_mode: msg.debate_mode ?? undefined,
                 discussion_mode_id: msg.discussion_mode_id ?? undefined,
-                max_debate_rounds: msg.max_debate_rounds ?? undefined,
-                debate_paused: msg.debate_paused ?? false,
                 stopped: msg.stopped ?? false,
-                usage: msg.usage ?? undefined,
-                tagged_panelists: msg.tagged_panelists ?? [],
+                usage: msg.usage != null ? ensureObject(msg.usage) as any : undefined,
               }));
             }
             if (!normalized[DEFAULT_THREAD_ID]) {
               normalized[DEFAULT_THREAD_ID] = [];
             }
             setConversations(normalized);
+            conversationThreadIds = serverThreadIds;
             serverConversationsLoaded = true;
             console.log("[Thread Restore] Conversations loaded from server");
           }
@@ -1014,35 +964,55 @@ export default function App() {
               normalized[DEFAULT_THREAD_ID] = [];
             }
             setConversations(normalized);
-            // Also write back to generic key so other effects stay in sync
+            conversationThreadIds = Object.keys(normalized).filter(
+              (tid) => (normalized[tid]?.length ?? 0) > 0
+            );
             localStorage.setItem("conversations", savedConvRaw);
             console.log(`[Thread Restore] Restored conversations from localStorage for user ${user.id}`);
           }
         }
 
-        // 3. Restore thread list from server
+        // 3. Restore thread list from server, merging with threads found in conversations
+        let allThreadIds: string[] = [];
         try {
           const serverThreads = await fetchThreads();
           console.log(`[Thread Restore] Server returned ${serverThreads.length} threads:`,
             serverThreads.map(t => t.thread_id));
-
-          if (serverThreads.length > 0) {
-            const threadIds = serverThreads.map((t) => t.thread_id);
-            // Ensure demo-thread is included if not present
-            if (!threadIds.includes(DEFAULT_THREAD_ID)) {
-              threadIds.unshift(DEFAULT_THREAD_ID);
-            }
-            setThreads(threadIds);
-            // Set current thread to most recent if current thread not in list
-            if (!threadIds.includes(threadId)) {
-              setThreadId(threadIds[0]);
-            }
-            console.log(`[Thread Restore] Successfully restored ${serverThreads.length} threads`);
-          } else {
-            console.log("[Thread Restore] No threads found on server, keeping defaults");
-          }
+          allThreadIds = serverThreads.map((t) => t.thread_id);
         } catch (err) {
           console.error("[Thread Restore] Failed to restore threads:", err);
+        }
+
+        // Merge thread IDs from conversations that may not be in user_threads yet
+        for (const tid of conversationThreadIds) {
+          if (!allThreadIds.includes(tid)) {
+            allThreadIds.push(tid);
+            console.log(`[Thread Restore] Adding thread ${tid} from conversation data (missing from user_threads)`);
+          }
+        }
+
+        if (!allThreadIds.includes(DEFAULT_THREAD_ID)) {
+          allThreadIds.unshift(DEFAULT_THREAD_ID);
+        }
+
+        if (allThreadIds.length > 0) {
+          setThreads(allThreadIds);
+          if (!allThreadIds.includes(threadId)) {
+            setThreadId(allThreadIds[0]);
+          }
+          console.log(`[Thread Restore] Final thread list: ${allThreadIds.length} threads`);
+        } else {
+          console.log("[Thread Restore] No threads found, keeping defaults");
+        }
+
+        // Back-sync any missing threads to user_threads table
+        if (conversationThreadIds.length > 0) {
+          migrateThreads(conversationThreadIds, {
+            timestamp: new Date().toISOString(),
+            source: "conversation-restore",
+          }).catch((err) => {
+            console.debug("[Thread Restore] Background thread sync failed:", err);
+          });
         }
 
         // Allow the persist effect to write now that restore is complete
@@ -1228,33 +1198,6 @@ export default function App() {
     });
   }, []);
 
-  // Parse @ mentions from user input to extract tagged panelist names
-  // Names cannot contain spaces, only letters, numbers, underscores, and hyphens
-  const parseTaggedPanelists = useCallback(
-    (text: string): string[] => {
-      // Match @Name patterns - only word characters, underscores, hyphens (no spaces)
-      const mentions = text.match(/@([a-zA-Z0-9_-]+)/g) || [];
-      const tagged: string[] = [];
-
-      for (const mention of mentions) {
-        const tagName = mention.slice(1); // Remove @
-
-        // Find exact matching panelist (case-insensitive)
-        const match = panelists.find(p => 
-          p.name.toLowerCase() === tagName.toLowerCase()
-        );
-
-        if (match) {
-          tagged.push(match.name);
-        }
-      }
-
-      // Deduplicate and return
-      return [...new Set(tagged)];
-    },
-    [panelists]
-  );
-
   const preparedPanelists = useMemo(
     () =>
       panelists
@@ -1287,14 +1230,10 @@ export default function App() {
     async ({
       question,
       attachments,
-      customDebateMode,
-      customMaxRounds,
       discussionModeId,
     }: {
       question: string;
       attachments: string[];
-      customDebateMode?: DebateMode;
-      customMaxRounds?: number;
       discussionModeId?: DiscussionModeId;
     }) => {
       const hasContent = Boolean(question.trim()) || attachments.length > 0;
@@ -1305,8 +1244,6 @@ export default function App() {
       setLoading(true);
       setError(null);
       setSearchSources([]); // Clear previous search sources
-      setLiveStances({}); // Clear live stance tracking
-      setAssignedRoles({}); // Clear assigned roles
 
       // Create abort controller for this request
       const controller = new AbortController();
@@ -1317,19 +1254,6 @@ export default function App() {
       setActiveEntryId(entryId);
       setEntryStatus(entryId, "Starting...");
 
-      const useMaxRounds = customMaxRounds ?? DEFAULT_MAX_DEBATE_ROUNDS;
-
-      // Parse @ mentions to detect participatory mode
-      const taggedPanelists = parseTaggedPanelists(sanitizedQuestion);
-      const hasTaggedPanelists = taggedPanelists.length > 0;
-
-      // Determine effective debate mode:
-      // - If user tags panelists -> "participatory" (user actively participates)
-      // - Otherwise use the configured mode (or undefined for no debate)
-      const effectiveDebateMode: DebateMode | undefined = hasTaggedPanelists
-        ? "participatory"
-        : customDebateMode ?? DEFAULT_DEBATE_MODE;
-
       // Immediately add user message with loading state for assistant response
       const optimisticEntry: MessageEntry = {
         id: entryId,
@@ -1339,11 +1263,7 @@ export default function App() {
         panel_responses: {},
         panelists: panelists, // Store panelist configs to show model info later
         expanded: false,
-        debate_mode: effectiveDebateMode,
         discussion_mode_id: discussionModeId,
-        max_debate_rounds: useMaxRounds,
-        debate_history: [],
-        tagged_panelists: taggedPanelists,
       };
 
       setConversations((prev) => ({
@@ -1376,6 +1296,8 @@ export default function App() {
             {
               thread_id: threadId.trim(),
               question: sanitizedQuestion,
+              panelists: preparedPanelists,
+              provider_keys: sanitizedProviderKeys,
             },
             {
               onPhaseUpdate: (phase) => {
@@ -1513,80 +1435,15 @@ export default function App() {
             attachments,
             panelists: effectivePanelists,
             provider_keys: sanitizedProviderKeys,
-            debate_mode: effectiveDebateMode,
-            max_debate_rounds: useMaxRounds,
-            tagged_panelists: taggedPanelists,
             // Pass preset personas to backend for custom persona prompts
             preset_personas: presetPersonas,
-            // Stance mode from the discussion mode config
-            stance_mode: modeConfig?.stanceMode,
             // Custom moderator prompt for report consolidation
             moderator_prompt: modeConfig?.moderatorPrompt,
-            // In participatory mode, include the user's message
-            user_message: effectiveDebateMode === "participatory" ? sanitizedQuestion : undefined,
           },
           {
             onStatus: (message) => {
               setLoadingStatus(message);
               setEntryStatus(entryId, message);
-            },
-            onDebateRound: (round) => {
-              setEntryStatus(entryId, `Round ${round.round_number + 1} complete`);
-              // Update the entry with the new debate round in real-time
-              setConversations((prev) => ({
-                ...prev,
-                [threadId]: prev[threadId]?.map((entry) =>
-                  entry.id === entryId
-                    ? {
-                        ...entry,
-                        debate_history: [...(entry.debate_history || []), round],
-                      }
-                    : entry
-                ) ?? [],
-              }));
-            },
-            onDebatePaused: (result) => {
-              setEntryStatus(entryId, "Paused for review");
-              // Debate paused for user review
-              setConversations((prev) => {
-                const updated = {
-                  ...prev,
-                  [threadId]: prev[threadId]?.map((entry) =>
-                    entry.id === entryId
-                      ? {
-                          ...entry,
-                          panel_responses: result.panel_responses || entry.panel_responses,
-                          debate_history: entry.debate_history,
-                          debate_paused: true,
-                          usage: result.usage || entry.usage,
-                        }
-                      : entry
-                  ) ?? [],
-                };
-                // Persist paused state to server
-                const saved = updated[threadId]?.find((e) => e.id === entryId);
-                if (saved) saveMessageToServer(threadId, saved);
-                return updated;
-              });
-              // Clear loading state when debate pauses, but keep activeEntryId
-              // so the user input area at the bottom shows correctly
-              setLoading(false);
-              setLoadingStatus("Panel is thinking...");
-              // DON'T clear activeEntryId - the entry is still active, waiting for user input
-              // setActiveEntryId(null);
-
-              // Auto-generate title for supervised/participatory modes that pause
-              // (same logic as onResult, but triggered on first pause)
-              const isPlaceholderTitle = threadId.startsWith("Chat ");
-              if (isPlaceholderTitle) {
-                generateTitle(sanitizedQuestion).then((newTitle) => {
-                  if (newTitle) {
-                    renameThreadDirect(threadId, newTitle);
-                  }
-                }).catch((err) => {
-                  console.warn("Failed to auto-generate title:", err);
-                });
-              }
             },
             onSearchSource: (source) => {
               setSearchSources((prev) => [...prev, source]);
@@ -1608,21 +1465,6 @@ export default function App() {
                 ) ?? [],
               }));
             },
-            onStanceExtracted: (panelist, stance) => {
-              // Update live stance indicator during debate
-              setLiveStances((prev) => ({
-                ...prev,
-                [panelist]: {
-                  stance: stance.stance,
-                  confidence: stance.confidence,
-                  changed: stance.changed_from_previous,
-                },
-              }));
-            },
-            onRolesAssigned: (roles) => {
-              // Show assigned debate roles (PRO/CON/DEVIL'S ADVOCATE)
-              setAssignedRoles(roles);
-            },
             onResult: (result) => {
               clearEntryStatus(entryId);
               // Update the entry with the actual response
@@ -1635,9 +1477,6 @@ export default function App() {
                           ...entry,
                           summary: result.summary,
                           panel_responses: result.panel_responses,
-                          // Keep accumulated debate history from streaming (onDebateRound)
-                          debate_history: entry.debate_history,
-                          debate_paused: false,
                           usage: result.usage,
                         }
                       : entry
@@ -1650,20 +1489,14 @@ export default function App() {
               });
 
               // Auto-generate title if this thread has a placeholder name
-              // (only the first message will trigger this since after first message,
-              // the title is updated to a real name, so placeholder check is sufficient)
               const isPlaceholderTitle = threadId.startsWith("Chat ");
-
               if (isPlaceholderTitle) {
-                // Generate title in background (don't await)
                 generateTitle(sanitizedQuestion).then((newTitle) => {
                   if (newTitle) {
-                    // Rename thread from placeholder to generated title
                     renameThreadDirect(threadId, newTitle);
                   }
                 }).catch((err) => {
                   console.warn("Failed to auto-generate title:", err);
-                  // Silently fail - keep placeholder title
                 });
               }
 
@@ -1680,7 +1513,7 @@ export default function App() {
               }));
               setError(err.message);
               setLoading(false);
-              setLoadingStatus("Panel is thinking..."); // Reset status
+              setLoadingStatus("Panel is thinking...");
               setActiveEntryId(null);
               clearEntryStatus(entryId);
             },
@@ -1735,247 +1568,6 @@ export default function App() {
       }
     },
     [clearEntryStatus, loading, preparedPanelists, sanitizedProviderKeys, saveMessageToServer, setEntryStatus, threadId]
-  );
-
-  const handleContinueDebate = useCallback(
-    async (entryId: string, userMessage?: string) => {
-      const entry = conversations[threadId]?.find((e) => e.id === entryId);
-      if (!entry || !entry.debate_paused) {
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
-      setActiveEntryId(entryId);
-      setEntryStatus(entryId, userMessage ? "Sending your input..." : "Continuing debate...");
-
-      // Create abort controller for this request
-      const controller = new AbortController();
-      setAbortController(controller);
-
-      try {
-        await askPanelStream(
-          {
-            thread_id: threadId.trim(),
-            question: "", // Not needed for continuation
-            attachments: [],
-            panelists: preparedPanelists,
-            provider_keys: sanitizedProviderKeys,
-            continue_debate: true, // Signal this is a continuation
-            user_message: userMessage || undefined, // User's input for this round
-          },
-          {
-            onStatus: (message) => {
-              setLoadingStatus(message);
-              setEntryStatus(entryId, message);
-            },
-            onDebateRound: (round) => {
-              setEntryStatus(entryId, `Round ${round.round_number + 1} complete`);
-              // Add the new debate round
-              setConversations((prev) => ({
-                ...prev,
-                [threadId]: prev[threadId]?.map((e) =>
-                  e.id === entryId
-                    ? {
-                        ...e,
-                        debate_history: [...(e.debate_history || []), round],
-                      }
-                    : e
-                ) ?? [],
-              }));
-            },
-            onStanceExtracted: (panelist, stance) => {
-              // Update live stance indicator during debate
-              setLiveStances((prev) => ({
-                ...prev,
-                [panelist]: {
-                  stance: stance.stance,
-                  confidence: stance.confidence,
-                  changed: stance.changed_from_previous,
-                },
-              }));
-            },
-            onRolesAssigned: (roles) => {
-              // Show assigned debate roles (PRO/CON/DEVIL'S ADVOCATE)
-              setAssignedRoles(roles);
-            },
-            onDebatePaused: (result) => {
-              setEntryStatus(entryId, "Paused for review");
-              // Still paused - waiting for next round
-              setConversations((prev) => {
-                const updated = {
-                  ...prev,
-                  [threadId]: prev[threadId]?.map((e) =>
-                    e.id === entryId
-                      ? {
-                          ...e,
-                          panel_responses: result.panel_responses || e.panel_responses,
-                          debate_paused: true,
-                          usage: result.usage || e.usage,
-                        }
-                      : e
-                  ) ?? [],
-                };
-                const saved = updated[threadId]?.find((e) => e.id === entryId);
-                if (saved) saveMessageToServer(threadId, saved);
-                return updated;
-              });
-              // Clear loading state when debate pauses, but keep activeEntryId
-              // so the user input area at the bottom shows correctly
-              setLoading(false);
-              setLoadingStatus("Panel is thinking...");
-              // DON'T clear activeEntryId - the entry is still active, waiting for user input
-              // setActiveEntryId(null);
-            },
-            onResult: (result) => {
-              clearEntryStatus(entryId);
-              // Debate complete - got final summary
-              setConversations((prev) => {
-                const updated = {
-                  ...prev,
-                  [threadId]: prev[threadId]?.map((e) =>
-                    e.id === entryId
-                      ? {
-                          ...e,
-                          summary: result.summary,
-                          panel_responses: result.panel_responses,
-                          debate_paused: false,
-                          usage: result.usage,
-                        }
-                      : e
-                  ) ?? [],
-                };
-                const saved = updated[threadId]?.find((e) => e.id === entryId);
-                if (saved) saveMessageToServer(threadId, saved);
-                return updated;
-              });
-              // Clear loading state and activeEntryId when debate is fully complete
-              setLoading(false);
-              setLoadingStatus("Panel is thinking...");
-              setActiveEntryId(null);
-            },
-            onError: (err) => {
-              setError(err.message);
-              setLoading(false);
-              setLoadingStatus("Panel is thinking...");
-              setActiveEntryId(null);
-              clearEntryStatus(entryId);
-            },
-          },
-          controller.signal
-        );
-      } catch (err) {
-        // Don't show error if request was aborted by user
-        if (err instanceof Error && err.name === 'AbortError') {
-          console.log('Request aborted by user');
-          // Reset loading state
-          setLoading(false);
-          setLoadingStatus("Panel is thinking...");
-          setActiveEntryId(null);
-          clearEntryStatus(entryId);
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Something went wrong");
-      } finally {
-        setLoading(false);
-        setLoadingStatus("Panel is thinking...");
-        setAbortController(null); // Clean up abort controller
-        // DON'T clear activeEntryId here - it's cleared in onResult/onError callbacks
-        // If debate pauses again, we need activeEntryId to show the user input area
-        // setActiveEntryId(null);
-      }
-    },
-    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, saveMessageToServer, setEntryStatus, threadId]
-  );
-
-  const handleExitUserDebate = useCallback(
-    async (entryId: string) => {
-      const entry = conversations[threadId]?.find((e) => e.id === entryId);
-      if (!entry || !entry.debate_paused) {
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
-      setActiveEntryId(entryId);
-      setEntryStatus(entryId, "Exiting debate...");
-
-      // Create abort controller for this request
-      const controller = new AbortController();
-      setAbortController(controller);
-
-      try {
-        await askPanelStream(
-          {
-            thread_id: threadId.trim(),
-            question: "", // Not needed for exit
-            attachments: [],
-            panelists: preparedPanelists,
-            provider_keys: sanitizedProviderKeys,
-            continue_debate: true,
-            exit_debate: true, // Signal user is exiting the debate
-            debate_mode: entry.debate_mode,
-            max_debate_rounds: entry.max_debate_rounds,
-          },
-          {
-            onStatus: (message) => {
-              setLoadingStatus(message);
-              setEntryStatus(entryId, message);
-            },
-            onResult: (result) => {
-              clearEntryStatus(entryId);
-              // Debate complete - got final summary
-              setConversations((prev) => {
-                const updated = {
-                  ...prev,
-                  [threadId]: prev[threadId]?.map((e) =>
-                    e.id === entryId
-                      ? {
-                          ...e,
-                          summary: result.summary,
-                          panel_responses: result.panel_responses,
-                          debate_paused: false,
-                          usage: result.usage,
-                        }
-                      : e
-                  ) ?? [],
-                };
-                const saved = updated[threadId]?.find((e) => e.id === entryId);
-                if (saved) saveMessageToServer(threadId, saved);
-                return updated;
-              });
-              setLoading(false);
-              setLoadingStatus("Panel is thinking...");
-              setActiveEntryId(null);
-            },
-            onError: (err) => {
-              setError(err.message);
-              setLoading(false);
-              setLoadingStatus("Panel is thinking...");
-              setActiveEntryId(null);
-              clearEntryStatus(entryId);
-            },
-          },
-          controller.signal
-        );
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') {
-          console.log('Exit debate aborted');
-          setLoading(false);
-          setLoadingStatus("Panel is thinking...");
-          setActiveEntryId(null);
-          clearEntryStatus(entryId);
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Something went wrong");
-      } finally {
-        setLoading(false);
-        setLoadingStatus("Panel is thinking...");
-        setAbortController(null);
-        setActiveEntryId(null);
-      }
-    },
-    [clearEntryStatus, conversations, preparedPanelists, sanitizedProviderKeys, saveMessageToServer, setEntryStatus, threadId]
   );
 
   const stopGeneration = useCallback(() => {
@@ -2418,7 +2010,7 @@ export default function App() {
     setRegenerateModalOpen(true);
   }, []);
 
-  const confirmRegenerate = useCallback(async (debateMode: DebateMode | undefined, rounds: number) => {
+  const confirmRegenerate = useCallback(async (modeId: DiscussionModeId) => {
     if (regenerateIndex === null) return;
 
     const entry = conversations[threadId]?.[regenerateIndex];
@@ -2430,12 +2022,11 @@ export default function App() {
       [threadId]: prev[threadId]?.filter((_, i) => i !== regenerateIndex) ?? [],
     }));
 
-    // Re-send the question with custom debate settings
+    // Re-send the question with the locked discussion mode
     await handleSend({
       question: entry.question,
       attachments: entry.attachments,
-      customDebateMode: debateMode,
-      customMaxRounds: rounds,
+      discussionModeId: modeId,
     });
 
     setRegenerateIndex(null);
@@ -2779,7 +2370,6 @@ export default function App() {
                     onCopy={copyToClipboard}
                     onDelete={() => deleteMessage(index)}
                     onRegenerate={() => openRegenerateModal(index)}
-                    onContinueDebate={() => handleContinueDebate(entry.id)}
                     containerWidth={scrollContainerWidth}
                   />
                 ))}
@@ -2811,6 +2401,8 @@ export default function App() {
                               action: feedback.action as "proceed" | "re_analyze" | "remove_option",
                               additional_instructions: feedback.additional_instructions,
                             },
+                            panelists: preparedPanelists,
+                            provider_keys: sanitizedProviderKeys,
                           },
                           {
                             onPhaseUpdate: (phase) => {
@@ -2934,186 +2526,19 @@ export default function App() {
                         {activeEntryId ? statusByEntryId[activeEntryId] ?? loadingStatus : loadingStatus}
                       </span>
                     </div>
-                    {activeEntry?.debate_mode && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground whitespace-nowrap">
-                        {activeEntry.debate_mode !== "autonomous" && (
-                          <span className="px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
-                            {getModeConfig(activeEntry.discussion_mode_id)?.shortName ?? (activeEntry.debate_mode === "participatory" ? "Participatory" : "Supervised")}
-                          </span>
-                        )}
-                        <span>
-                          Round {(activeEntry.debate_history?.length ?? 0) + 1}/{activeEntry.max_debate_rounds ?? DEFAULT_MAX_DEBATE_ROUNDS}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  {/* Human-in-the-loop guidance for supervised/participatory modes */}
-                  {activeEntry?.debate_mode === "supervised" && (
-                    <div className="mt-2 text-xs text-muted-foreground bg-accent/5 border border-accent/20 rounded-lg px-3 py-2">
-                      <span className="font-medium text-accent">Supervised mode</span> — Review the debate and continue to the next round when ready.
-                    </div>
-                  )}
-                  {activeEntry?.debate_mode === "participatory" && (
-                    <div className="mt-2 text-xs text-muted-foreground bg-accent/5 border border-accent/20 rounded-lg px-3 py-2">
-                      <span className="font-medium text-accent">You can participate!</span> After this round completes, add your input or @mention panelists to guide the discussion.
-                    </div>
-                  )}
-                  {/* Live Stance Indicator during debate */}
-                  {activeEntry?.debate_mode && Object.keys(liveStances).length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {Object.entries(liveStances).map(([name, { stance, confidence, changed }]) => {
-                        const stanceColors: Record<string, string> = {
-                          FOR: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30",
-                          AGAINST: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30",
-                          NEUTRAL: "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30",
-                        };
-                        const roleLabel = assignedRoles[name] ? ` [${assignedRoles[name]}]` : "";
-                        return (
-                          <div
-                            key={name}
-                            className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs ${stanceColors[stance] || stanceColors.NEUTRAL}`}
-                          >
-                            <span className="font-medium">{name}{roleLabel}</span>
-                            <span className="opacity-75">{stance}</span>
-                            <span className="opacity-50">{Math.round(confidence * 100)}%</span>
-                            {changed && <span className="text-amber-500" title="Changed from previous">↻</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Supervised Mode: Review-only with Continue button */}
-              {activeEntry?.debate_paused && activeEntry?.debate_mode === "supervised" && (
-                <div className="mb-3 rounded-xl border-2 border-accent/40 bg-accent/5 backdrop-blur-sm p-4 shadow-md">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="px-2.5 py-1 rounded-full bg-accent text-accent-foreground font-medium">
-                          Review Complete
-                        </span>
-                        <span className="text-muted-foreground">
-                          Round {(activeEntry.debate_history?.length ?? 0)}/{activeEntry.max_debate_rounds ?? 3}
-                        </span>
-                      </div>
-                      <span className="text-xs text-muted-foreground px-2 py-0.5 rounded bg-muted">
-                        {getModeConfig(activeEntry.discussion_mode_id)?.shortName ?? "Supervised"} Mode
-                      </span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Review the panelists' arguments above, then continue to the next round.
-                    </p>
-                    <div className="flex justify-end">
-                      <button
-                        onClick={() => handleContinueDebate(activeEntry.id)}
-                        disabled={loading}
-                        className="px-5 py-2.5 rounded-lg bg-accent hover:bg-accent/90 text-accent-foreground text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm flex items-center gap-2"
-                      >
-                        <span>Continue to Round {(activeEntry.debate_history?.length ?? 0) + 1}</span>
-                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M5 12h14M12 5l7 7-7 7" />
-                        </svg>
-                      </button>
-                    </div>
                   </div>
                 </div>
               )}
 
-              {/* Participatory Mode: User can inject messages */}
-              {activeEntry?.debate_paused && activeEntry?.debate_mode === "participatory" && (
-                <div className="mb-3 rounded-xl border-2 border-accent/40 bg-accent/5 backdrop-blur-sm p-4 shadow-md">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="px-2.5 py-1 rounded-full bg-accent text-accent-foreground font-medium">
-                          Your Turn
-                        </span>
-                        <span className="text-muted-foreground">
-                          Round {(activeEntry.debate_history?.length ?? 0)}/{activeEntry.max_debate_rounds ?? 3} complete
-                        </span>
-                      </div>
-                      <span className="text-xs text-muted-foreground px-2 py-0.5 rounded bg-muted">
-                        {getModeConfig(activeEntry.discussion_mode_id)?.shortName ?? "Participatory"} Mode
-                      </span>
-                    </div>
-                    <textarea
-                      placeholder="Add your thoughts, ask questions, or @mention panelists to direct the debate..."
-                      value={debateUserInput}
-                      onChange={(e) => setDebateUserInput(e.target.value)}
-                      disabled={loading}
-                      autoFocus
-                      className="w-full min-h-[100px] px-4 py-3 rounded-lg border border-accent/30 bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs text-muted-foreground">
-                        <span className="font-medium">Tip:</span> Use @PanelistName to direct questions to specific panelists
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            handleContinueDebate(activeEntry.id);
-                            setDebateUserInput("");
-                          }}
-                          disabled={loading}
-                          className="px-4 py-2.5 rounded-lg bg-muted hover:bg-muted/80 text-foreground text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-border/50"
-                        >
-                          Skip & Continue
-                        </button>
-                        <button
-                          onClick={() => {
-                            handleContinueDebate(activeEntry.id, debateUserInput);
-                            setDebateUserInput("");
-                          }}
-                          disabled={loading || !debateUserInput.trim()}
-                          className="px-5 py-2.5 rounded-lg bg-accent hover:bg-accent/90 text-accent-foreground text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                        >
-                          Send & Continue
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Exit Participatory Debate Button */}
-              {activeEntry?.debate_paused && activeEntry?.debate_mode === "participatory" && (
-                <div className="flex gap-2 px-4 pb-4">
-                  <button
-                    onClick={() => handleExitUserDebate(activeEntry.id)}
-                    disabled={loading}
-                    className="px-4 py-2 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-destructive/30"
-                  >
-                    Exit Debate
-                  </button>
-                </div>
-              )}
-
-              {/* Hide main composer when supervised/participatory debate is active */}
-              {!(activeEntry?.debate_mode && activeEntry.debate_mode !== "autonomous" && (loading || activeEntry.debate_paused)) && (
-                <ChatComposer
-                  loading={loading}
-                  error={error}
-                  isNewChat={messages.length === 0}
-                  onSend={handleSend}
-                  onStop={stopGeneration}
-                  onClearError={() => setError(null)}
-                  onError={(message) => setError(message)}
-                />
-              )}
-
-              {/* Stop button only when supervised debate is loading */}
-              {activeEntry?.debate_mode && activeEntry.debate_mode !== "autonomous" && loading && (
-                <div className="flex justify-center mt-2">
-                  <button
-                    onClick={stopGeneration}
-                    className="px-4 py-2 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive text-sm font-medium transition-colors border border-destructive/30"
-                  >
-                    Stop Generation
-                  </button>
-                </div>
-              )}
+              <ChatComposer
+                loading={loading}
+                error={error}
+                isNewChat={messages.length === 0}
+                onSend={handleSend}
+                onStop={stopGeneration}
+                onClearError={() => setError(null)}
+                onError={(message) => setError(message)}
+              />
             </div>
           </section>
       </main>
@@ -3141,15 +2566,10 @@ export default function App() {
           setRegenerateIndex(null);
         }}
         onConfirm={confirmRegenerate}
-        defaultDebateMode={
+        modeId={
           regenerateIndex !== null
-            ? conversations[threadId]?.[regenerateIndex]?.debate_mode ?? DEFAULT_DEBATE_MODE
-            : DEFAULT_DEBATE_MODE
-        }
-        defaultMaxRounds={
-          regenerateIndex !== null
-            ? conversations[threadId]?.[regenerateIndex]?.max_debate_rounds ?? DEFAULT_MAX_DEBATE_ROUNDS
-            : DEFAULT_MAX_DEBATE_ROUNDS
+            ? conversations[threadId]?.[regenerateIndex]?.discussion_mode_id ?? "panel"
+            : "panel"
         }
       />
 
@@ -3165,8 +2585,6 @@ interface ChatComposerProps {
   onSend: (payload: {
     question: string;
     attachments: string[];
-    customDebateMode?: DebateMode;
-    customMaxRounds?: number;
     discussionModeId?: DiscussionModeId;
   }) => Promise<void>;
   onStop: () => void;
@@ -3188,20 +2606,15 @@ function ChatComposer({
   const [discussionModeId, setDiscussionModeId] = useState<DiscussionModeId>(
     getDefaultMode().id
   );
-  const [modeRounds, setModeRounds] = useState(getDefaultMode().defaultRounds);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Get current mode configuration
   const currentMode = getModeConfig(discussionModeId);
 
-  // Handle mode change - update rounds to mode default
+  // Handle mode change
   const handleModeChange = (newModeId: DiscussionModeId) => {
-    const newMode = getModeConfig(newModeId);
     setDiscussionModeId(newModeId);
-    if (newMode) {
-      setModeRounds(newMode.defaultRounds);
-    }
   };
 
   const hasContent = Boolean(question.trim()) || attachments.length > 0;
@@ -3232,9 +2645,6 @@ function ChatComposer({
     // Clear immediately for better UX
     const currentQuestion = question;
     const currentAttachments = [...attachments];
-    const mode = getModeConfig(discussionModeId);
-    const currentDebateMode = mode?.debateMode;
-    const currentMaxRounds = modeRounds;
     setQuestion("");
     setAttachments([]);
 
@@ -3245,8 +2655,6 @@ function ChatComposer({
       await onSend({
         question: currentQuestion,
         attachments: currentAttachments,
-        customDebateMode: currentDebateMode,
-        customMaxRounds: currentMaxRounds,
         discussionModeId: discussionModeId,
       });
     } catch {
