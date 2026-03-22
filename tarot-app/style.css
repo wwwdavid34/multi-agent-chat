@@ -1,0 +1,499 @@
+/* === Reset & Base === */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-dark: #0a0a1a;
+    --bg-card: #1a1a2e;
+    --gold: #d4af37;
+    --gold-light: #f0d060;
+    --purple: #6a0dad;
+    --purple-light: #9b59b6;
+    --text: #e8e8f0;
+    --text-muted: #8888aa;
+    --reversed: #c0392b;
+}
+
+body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    background: var(--bg-dark);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+}
+
+/* === Starfield background === */
+.stars {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.star {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: white;
+    border-radius: 50%;
+    animation: twinkle var(--duration) ease-in-out infinite;
+    opacity: 0;
+}
+
+@keyframes twinkle {
+    0%, 100% { opacity: 0.1; }
+    50% { opacity: var(--max-opacity); }
+}
+
+/* === Layout === */
+.container {
+    position: relative;
+    z-index: 1;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+header h1 {
+    font-size: 3rem;
+    background: linear-gradient(135deg, var(--gold), var(--gold-light), var(--gold));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+    letter-spacing: 0.1em;
+}
+
+.subtitle {
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 0.5rem;
+    font-size: 1.1rem;
+}
+
+/* === Spread Selector === */
+.spread-selector {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.spread-btn {
+    background: var(--bg-card);
+    border: 2px solid transparent;
+    color: var(--text);
+    padding: 1rem 1.5rem;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 160px;
+}
+
+.spread-btn:hover {
+    border-color: var(--gold);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(212, 175, 55, 0.2);
+}
+
+.spread-btn.active {
+    border-color: var(--gold);
+    background: linear-gradient(135deg, rgba(106, 13, 173, 0.3), rgba(26, 26, 46, 1));
+}
+
+.spread-icon {
+    font-size: 1.5rem;
+    color: var(--gold);
+}
+
+.spread-name {
+    font-weight: bold;
+    font-size: 1rem;
+}
+
+.spread-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* === Controls === */
+.controls {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.draw-btn {
+    position: relative;
+    background: linear-gradient(135deg, var(--purple), var(--purple-light));
+    color: white;
+    border: none;
+    padding: 1rem 3rem;
+    font-size: 1.2rem;
+    font-family: inherit;
+    border-radius: 50px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.draw-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 30px rgba(106, 13, 173, 0.5);
+}
+
+.draw-btn:active {
+    transform: scale(0.98);
+}
+
+.draw-glow {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: radial-gradient(circle, rgba(255,255,255,0.3), transparent);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.5s, height 0.5s;
+}
+
+.draw-btn:hover .draw-glow {
+    width: 300px;
+    height: 300px;
+}
+
+.reset-btn {
+    background: transparent;
+    border: 2px solid var(--gold);
+    color: var(--gold);
+    padding: 0.75rem 2rem;
+    font-size: 1rem;
+    font-family: inherit;
+    border-radius: 50px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-left: 1rem;
+}
+
+.reset-btn:hover {
+    background: var(--gold);
+    color: var(--bg-dark);
+}
+
+/* === Reading Area === */
+.reading-area {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    padding: 1rem;
+    min-height: 100px;
+}
+
+/* Celtic Cross layout */
+.reading-area.celtic-layout {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: repeat(4, auto);
+    gap: 1rem;
+    max-width: 900px;
+    margin: 0 auto;
+    justify-items: center;
+    align-items: start;
+}
+
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(1) { grid-column: 2; grid-row: 2; }  /* Present */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(2) { grid-column: 2; grid-row: 2; transform: rotate(90deg) translateX(10px); z-index: 2; }  /* Challenge */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(3) { grid-column: 2; grid-row: 3; }  /* Foundation */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(4) { grid-column: 1; grid-row: 2; }  /* Past */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(5) { grid-column: 2; grid-row: 1; }  /* Crown */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(6) { grid-column: 3; grid-row: 2; }  /* Future */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(7) { grid-column: 5; grid-row: 4; }  /* Self */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(8) { grid-column: 5; grid-row: 3; }  /* Environment */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(9) { grid-column: 5; grid-row: 2; }  /* Hopes */
+.reading-area.celtic-layout .tarot-card-wrapper:nth-child(10) { grid-column: 5; grid-row: 1; } /* Outcome */
+
+/* === Tarot Card === */
+.tarot-card-wrapper {
+    perspective: 1000px;
+    width: 160px;
+    opacity: 0;
+    animation: fadeInCard 0.6s ease forwards;
+}
+
+.tarot-card-wrapper .position-label {
+    text-align: center;
+    font-size: 0.7rem;
+    color: var(--gold);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.5rem;
+    font-weight: bold;
+}
+
+.tarot-card {
+    width: 160px;
+    height: 270px;
+    position: relative;
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition: transform 0.8s ease;
+}
+
+.tarot-card.flipped {
+    transform: rotateY(180deg);
+}
+
+.tarot-card.reversed.flipped {
+    transform: rotateY(180deg) rotate(180deg);
+}
+
+.card-front, .card-back {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    backface-visibility: hidden;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.card-back {
+    background: linear-gradient(135deg, #1a0533, #2d1b69);
+    border: 2px solid var(--gold);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.card-back-design {
+    width: 80%;
+    height: 80%;
+    border: 1px solid var(--gold);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: repeating-conic-gradient(
+        rgba(212, 175, 55, 0.1) 0% 25%,
+        transparent 25% 50%
+    ) 50% / 20px 20px;
+}
+
+.card-back-design::after {
+    content: '\2726';
+    font-size: 3rem;
+    color: var(--gold);
+}
+
+.card-front {
+    transform: rotateY(180deg);
+    background: #f5f0e8;
+    border: 2px solid var(--gold);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px;
+}
+
+.card-image {
+    width: 100%;
+    height: 200px;
+    object-fit: contain;
+    background: #f5f0e8;
+}
+
+.card-image-placeholder {
+    width: 100%;
+    height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 4rem;
+    background: linear-gradient(180deg, #f5f0e8, #e8ddd0);
+    color: var(--purple);
+}
+
+.card-title {
+    font-size: 0.7rem;
+    color: #2c2c2c;
+    text-align: center;
+    font-weight: bold;
+    margin-top: 4px;
+    line-height: 1.2;
+}
+
+.reversed-badge {
+    font-size: 0.55rem;
+    color: var(--reversed);
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* === Card Info Panel === */
+.card-info {
+    text-align: center;
+    margin-top: 0.75rem;
+    max-width: 160px;
+}
+
+.card-info .info-name {
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: var(--gold);
+}
+
+.card-info .info-desc {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.3rem;
+    line-height: 1.4;
+}
+
+/* === Spread Info === */
+.spread-info {
+    max-width: 800px;
+    margin: 2rem auto 0;
+    padding: 1.5rem;
+    background: rgba(26, 26, 46, 0.8);
+    border-radius: 12px;
+    border: 1px solid rgba(212, 175, 55, 0.2);
+    display: none;
+}
+
+.spread-info.visible {
+    display: block;
+}
+
+.spread-info h3 {
+    color: var(--gold);
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.spread-info .reading-summary {
+    color: var(--text-muted);
+    line-height: 1.8;
+}
+
+.spread-info .reading-summary .card-reading {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    border-left: 3px solid var(--gold);
+}
+
+.spread-info .reading-summary .card-reading .position-name {
+    color: var(--gold);
+    font-weight: bold;
+    font-size: 0.85rem;
+}
+
+.spread-info .reading-summary .card-reading .card-name {
+    color: var(--text);
+    font-weight: bold;
+}
+
+.spread-info .reading-summary .card-reading .card-name.reversed {
+    color: var(--reversed);
+}
+
+.spread-info .reading-summary .card-reading .description {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-top: 0.25rem;
+}
+
+/* === Animations === */
+@keyframes fadeInCard {
+    from {
+        opacity: 0;
+        transform: translateY(30px) scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* === Responsive === */
+@media (max-width: 768px) {
+    header h1 {
+        font-size: 2rem;
+    }
+
+    .spread-selector {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .spread-btn {
+        min-width: 200px;
+    }
+
+    .reading-area.celtic-layout {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.5rem;
+    }
+
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(1) { grid-column: 2; grid-row: 2; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(2) { grid-column: 2; grid-row: 2; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(3) { grid-column: 2; grid-row: 3; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(4) { grid-column: 1; grid-row: 2; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(5) { grid-column: 2; grid-row: 1; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(6) { grid-column: 3; grid-row: 2; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(7) { grid-column: 4; grid-row: 4; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(8) { grid-column: 4; grid-row: 3; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(9) { grid-column: 4; grid-row: 2; }
+    .reading-area.celtic-layout .tarot-card-wrapper:nth-child(10) { grid-column: 4; grid-row: 1; }
+
+    .tarot-card-wrapper {
+        width: 120px;
+    }
+
+    .tarot-card {
+        width: 120px;
+        height: 200px;
+    }
+
+    .card-image, .card-image-placeholder {
+        height: 150px;
+    }
+}
+
+@media (max-width: 480px) {
+    .tarot-card-wrapper {
+        width: 100px;
+    }
+
+    .tarot-card {
+        width: 100px;
+        height: 170px;
+    }
+
+    .card-image, .card-image-placeholder {
+        height: 120px;
+    }
+
+    .card-title {
+        font-size: 0.6rem;
+    }
+}

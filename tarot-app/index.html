@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mystic Tarot - Card Reading</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="stars" id="stars"></div>
+    <div class="container">
+        <header>
+            <h1>Mystic Tarot</h1>
+            <p class="subtitle">Unveil the wisdom of the cards</p>
+        </header>
+
+        <nav class="spread-selector">
+            <button class="spread-btn active" data-spread="single">
+                <span class="spread-icon">&#9734;</span>
+                <span class="spread-name">Single Card</span>
+                <span class="spread-desc">Quick insight</span>
+            </button>
+            <button class="spread-btn" data-spread="three">
+                <span class="spread-icon">&#9734;&#9734;&#9734;</span>
+                <span class="spread-name">Three Cards</span>
+                <span class="spread-desc">Past &bull; Present &bull; Future</span>
+            </button>
+            <button class="spread-btn" data-spread="celtic">
+                <span class="spread-icon">&#10017;</span>
+                <span class="spread-name">Celtic Cross</span>
+                <span class="spread-desc">Full 10-card reading</span>
+            </button>
+        </nav>
+
+        <div class="controls">
+            <button class="draw-btn" id="drawBtn">
+                <span class="draw-text">Draw Cards</span>
+                <span class="draw-glow"></span>
+            </button>
+            <button class="reset-btn" id="resetBtn" style="display:none;">New Reading</button>
+        </div>
+
+        <div class="reading-area" id="readingArea"></div>
+
+        <div class="spread-info" id="spreadInfo"></div>
+    </div>
+
+    <script src="cards.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
